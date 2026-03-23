@@ -1,0 +1,6 @@
+node_modules/
+dist/
+.local-agent-data/
+*.log
+.DS_Store
+out/

@@ -1,0 +1,20 @@
+{
+  "name": "demo-electron",
+  "private": true,
+  "version": "0.0.1",
+  "description": "Minimal Electron shell to exercise the workspace SDK (placeholder UI)",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "dev": "tsc -p tsconfig.json && electron ."
+  },
+  "dependencies": {
+    "@local-ai/sdk-ts": "0.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "electron": "^34.0.0",
+    "typescript": "^5.7.3"
+  }
+}

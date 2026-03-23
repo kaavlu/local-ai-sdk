@@ -1,0 +1,23 @@
+{
+  "name": "local-ai-sdk",
+  "private": true,
+  "version": "0.0.1",
+  "description": "Local-first AI SDK monorepo (prototype scaffolding)",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "clean": "node scripts/clean.cjs",
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "dev:agent": "npm run dev -w @local-ai/agent",
+    "dev:app": "npm run dev -w demo-electron"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
