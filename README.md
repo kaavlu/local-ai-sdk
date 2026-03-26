@@ -8,7 +8,7 @@ Monorepo scaffolding for a local-first AI SDK: a TypeScript client library, a sm
 |----------|---------|
 | `packages/sdk-ts` | TypeScript SDK (`@local-ai/sdk-ts`). Thin surface: `enqueueJob`, `getJobStatus`, `getJobResult` — currently throw `"Not implemented"`. Built to `dist/` as a normal library. |
 | `packages/agent` | Node + TypeScript service (`@local-ai/agent`). Listens on `127.0.0.1:${PORT}` (default `8787`). Serves `GET /health` with `{ "ok": true }`. On startup it creates/opens a local **SQLite** database (via **sql.js**, WASM) and runs idempotent schema DDL. After the DB is ready, it collects a **basic device profile** (OS + release, CPU arch, logical CPU count, total/free RAM in MiB, free disk space in MiB on the agent data volume when available) and upserts it into the `device_profile` table (`id = 1`). Inspect the stored row with `GET /debug/profile`. |
-| `apps/demo-electron` | Minimal Electron app (`demo-electron`). Compiles TypeScript in `src/`, loads `index.html` at the app root, and imports `@local-ai/sdk-ts` from the **main** process to verify workspace wiring. |
+| `apps/demo-electron` | Minimal Electron app (`demo-electron`). Compiles TypeScript in `src/`, loads `index.html` at the app root, imports `@local-ai/sdk-ts` from the **main** process, and (Step 7) periodically POSTs machine idle/power signals to the agent from the **main** process via `powerMonitor`. |
 
 ## Prerequisites
 
@@ -74,13 +74,19 @@ curl http://127.0.0.1:8787/health
 
 - **Library:** [sql.js](https://github.com/sql-js/sql.js/) (SQLite compiled to WebAssembly). It avoids native addons so `npm install` works without Visual Studio / `node-gyp` on Windows; the schema and SQL are the same as with a native driver.
 - **File location (default):** `packages/agent/.local-agent-data/agent.sqlite` (directory is created on first run). Override the directory with env **`LOCAL_AGENT_DATA_DIR`** (absolute path, or resolved from the process cwd).
-- **Inspect:** `GET http://127.0.0.1:8787/debug/db` returns JSON: DB path, table names, row counts for `jobs` / `results`, `schema_version` from `agent_state` (set to `1` on startup), and whether a `device_profile` row exists (`device_profile_row`).
+- **Inspect:** `GET http://127.0.0.1:8787/debug/db` returns JSON: DB path, table names, row counts for `jobs` / `results`, `schema_version` from `agent_state` (currently `2` after Step 7 bootstrap), whether a `device_profile` row exists (`device_profile_row`), and whether a `machine_state` row exists (`machine_state_row`).
 - **Device profile:** On each startup the agent records one row (`id = 1`) with `os`, `arch`, `cpu_count`, `ram_total_mb`, `ram_free_mb`, `disk_free_mb`, and `updated_at` (ms epoch). **View it:** `GET http://127.0.0.1:8787/debug/profile` returns that row as JSON. Free disk space uses Node’s `fs.statfsSync` on the agent data directory when the API exists; if probing fails, `disk_free_mb` is `-1`.
-- **Jobs (Step 4 + Step 5):** The agent accepts job submissions over HTTP and stores rows in SQLite (`jobs` table). New jobs are created in state `queued`, then **Step 5** runs an in-process mock pipeline before the HTTP response returns: the latest `device_profile` is used to route to **`local_mock`** or **`cloud_mock`** (prototype rule: if `ram_free_mb` is defined and below **4000** MiB → `cloud_mock`, else `local_mock`; threshold is `ROUTE_RAM_FREE_MB_THRESHOLD` in `packages/agent/src/router/index.ts`). Mock executors apply a short delay and write a row to **`results`** (`output_json`, `executor`, `completed_at`); on success the job ends in `completed`, on failure in `failed` with no result row. There is still no real AI inference or network calls.
-  - **`POST /jobs`** — Body JSON: `{ "taskType": string, "payload": object, "policy": string }`. `taskType` and `policy` must be non-empty strings; `payload` must be present and JSON-serializable. Responds `201` with `{ id, state, taskType, policy, createdAt }` (after mock execution, `state` is typically `completed`).
-  - **`GET /jobs/:id`** — Returns the job row with deserialized `payload`, or `404` with `{ "error": "job_not_found", "id": "..." }`.
-  - **`GET /jobs/:id/result`** — Returns `{ jobId, output, executor, completedAt }` when a result exists, or `404` with `{ "error": "result_not_found" }`.
-  - **Example (create a job):**
+- **Jobs (Step 4 + Step 5 + Step 6):** The agent accepts job submissions over HTTP and stores rows in SQLite (`jobs` table). New jobs are created in state `queued`. The latest `device_profile` is used to route to **`local_mock`** or **`cloud_mock`** (prototype rule: if `ram_free_mb` is defined and below **4000** MiB → `cloud_mock`, else `local_mock`; threshold is `ROUTE_RAM_FREE_MB_THRESHOLD` in `packages/agent/src/router/index.ts`). Mock executors apply a short delay and write a row to **`results`** (`output_json`, `executor`, `completed_at`); on success the job ends in `completed`, on failure in `failed` with no result row. There is still no real AI inference or network calls.
+
+### Step 6: Async worker
+
+- Jobs are **processed asynchronously** by an in-process background worker (`packages/agent/src/worker/index.ts`). **`POST /jobs` returns immediately** with `state: "queued"`; the worker polls SQLite every ~300ms for queued jobs, claims one at a time (sets `running` before work), runs the same mock pipeline as Step 5, then persists `completed` / `failed` and **`results`** as before.
+- State transitions over time: **`queued` → `running` → `completed`** (or **`failed`**). Poll **`GET /jobs/:id`** to observe updates; **`GET /jobs/:id/result`** returns `404` until a result row exists.
+
+- **`POST /jobs`** — Body JSON: `{ "taskType": string, "payload": object, "policy": string }`. `taskType` and `policy` must be non-empty strings; `payload` must be present and JSON-serializable. Responds `201` with `{ id, state, taskType, policy, createdAt }` with **`state` initially `queued`** (execution happens in the background).
+- **`GET /jobs/:id`** — Returns the job row with deserialized `payload`, or `404` with `{ "error": "job_not_found", "id": "..." }`.
+- **`GET /jobs/:id/result`** — Returns `{ jobId, output, executor, completedAt }` when a result exists, or `404` with `{ "error": "result_not_found" }`.
+- **Example (create a job):**
 
 ```bash
 curl -s -X POST http://127.0.0.1:8787/jobs \
@@ -89,6 +95,13 @@ curl -s -X POST http://127.0.0.1:8787/jobs \
 ```
 
 - **Reset:** Stop the agent, then delete the `.local-agent-data` folder (or only `agent.sqlite`) under `packages/agent`, or clear the directory pointed to by `LOCAL_AGENT_DATA_DIR`.
+
+### Step 7: Machine state + worker scheduling gates
+
+- **Reporting:** The Electron demo app sends machine signals to the agent about every **5 seconds** while it is open: `POST http://127.0.0.1:8787/machine-state` with JSON `{ "isSystemIdle", "idleSeconds", "isOnAcPower" }`. Values come from Electron **`powerMonitor`** in the **main** process (`getSystemIdleTime`, `getSystemIdleState`, `onBatteryPower`). Override the agent base URL with **`LOCAL_AGENT_URL`** if needed.
+- **Storage:** The agent upserts a single row in **`machine_state`** (`id = 1`). Inspect with **`GET /debug/machine-state`** (returns `{ exists: false, ... }` until the first POST).
+- **Worker rule (prototype):** The background worker **only** picks **queued** jobs when the latest row satisfies: `is_system_idle = 1`, `idle_seconds >= 10`, and `is_on_ac_power = 1`. If no row exists, the machine is treated as **ineligible** and jobs stay **queued**. The idle threshold is **`MIN_IDLE_SECONDS_FOR_BACKGROUND_WORK`** in `packages/agent/src/worker/eligibility.ts` (easy to change).
+- **Logs:** The worker logs when eligibility flips between allowed and blocked (not every poll). The agent logs when stored machine state **changes** meaningfully (avoids spamming on identical 5s reports).
 
 ## Run the Electron demo (dev)
 

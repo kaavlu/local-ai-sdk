@@ -203,6 +203,29 @@ function rowToJobRecord(row: Record<string, SqlValue>): JobRecord | null {
   };
 }
 
+const NEXT_QUEUED = `
+SELECT id, task_type, payload_json, policy, state, created_at, updated_at
+FROM jobs
+WHERE state = 'queued'
+ORDER BY created_at ASC
+LIMIT 1
+`;
+
+/**
+ * Returns the oldest queued job, or null if none.
+ */
+export function getNextQueuedJob(db: Database): JobRecord | null {
+  const stmt = db.prepare(NEXT_QUEUED);
+  const hasRow = stmt.step();
+  if (!hasRow) {
+    stmt.free();
+    return null;
+  }
+  const row = stmt.getAsObject() as Record<string, SqlValue>;
+  stmt.free();
+  return rowToJobRecord(row);
+}
+
 /**
  * Loads a job by primary key, or null if missing.
  */

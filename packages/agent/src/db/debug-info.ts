@@ -6,6 +6,7 @@ export interface DatabaseDebugInfo {
   counts: { jobs: number; results: number };
   schema_version: string | null;
   device_profile_row: boolean;
+  machine_state_row: boolean;
 }
 
 function firstColumnStrings(db: Database, sql: string): string[] {
@@ -46,6 +47,7 @@ export function getDatabaseDebugInfo(db: Database, dbPath: string): DatabaseDebu
       : null;
 
   const device_profile_row = firstScalarNumber(db, 'SELECT COUNT(*) FROM device_profile WHERE id = 1') > 0;
+  const machine_state_row = firstScalarNumber(db, 'SELECT COUNT(*) FROM machine_state WHERE id = 1') > 0;
 
   return {
     path: dbPath,
@@ -53,5 +55,6 @@ export function getDatabaseDebugInfo(db: Database, dbPath: string): DatabaseDebu
     counts: { jobs, results },
     schema_version,
     device_profile_row,
+    machine_state_row,
   };
 }

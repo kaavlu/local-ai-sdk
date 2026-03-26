@@ -10,8 +10,15 @@ import {
   jobToJson,
   validateCreateJobRequest,
 } from './jobs/index.js';
-import { runMockJobPipeline } from './jobs/pipeline.js';
 import { collectDeviceProfile, getLatestDeviceProfile, saveDeviceProfile } from './profiler/index.js';
+import {
+  getLatestMachineState,
+  machineStateToDebugJson,
+  maybeLogMachineStateUpdate,
+  saveMachineState,
+  validateMachineStatePostBody,
+} from './machine-state/index.js';
+import { startWorker } from './worker/index.js';
 
 const PORT = Number(process.env.PORT) || 8787;
 
@@ -66,6 +73,8 @@ async function main(): Promise<void> {
       profile.disk_free_mb,
   );
 
+  const stopWorker = startWorker(db, dbPath);
+
   console.log('[agent] phase=http: creating HTTP server');
   const server = http.createServer((req, res) => {
     const pathname = (req.url?.split('?')[0] ?? '/').replace(/\/+$/, '') || '/';
@@ -92,6 +101,38 @@ async function main(): Promise<void> {
       }
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
       res.end(JSON.stringify(stored));
+      return;
+    }
+
+    if (req.method === 'GET' && pathname === '/debug/machine-state') {
+      const stored = getLatestMachineState(db);
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify(machineStateToDebugJson(stored)));
+      return;
+    }
+
+    if (req.method === 'POST' && pathname === '/machine-state') {
+      void (async () => {
+        try {
+          const body = await readJsonBody(req);
+          const validated = validateMachineStatePostBody(body);
+          if (!validated.ok) {
+            json(res, 400, { error: 'validation_error', message: validated.message });
+            return;
+          }
+          const prev = getLatestMachineState(db);
+          const saved = saveMachineState(db, dbPath, validated.value);
+          maybeLogMachineStateUpdate(prev, saved);
+          json(res, 200, { ok: true, updatedAt: saved.updated_at });
+        } catch (e) {
+          if (e instanceof SyntaxError) {
+            json(res, 400, { error: 'bad_request', message: 'invalid JSON body' });
+            return;
+          }
+          console.error('[agent] machine-state: POST failed:', e);
+          json(res, 500, { error: 'internal_error' });
+        }
+      })();
       return;
     }
 
@@ -134,11 +175,7 @@ async function main(): Promise<void> {
           const job = createJob(db, dbPath, validated.value);
           console.log('[agent] job: created id=' + job.id);
 
-          const profile = getLatestDeviceProfile(db);
-          await runMockJobPipeline(db, dbPath, job, profile);
-
-          const finalJob = getJobById(db, job.id);
-          json(res, 201, jobCreatedResponse(finalJob ?? job));
+          json(res, 201, jobCreatedResponse(job));
         } catch (e) {
           if (e instanceof SyntaxError) {
             json(res, 400, { error: 'bad_request', message: 'invalid JSON body' });
@@ -163,6 +200,8 @@ async function main(): Promise<void> {
     }
     shuttingDown = true;
     console.log('[agent] ' + signal + ' received, shutting down...');
+
+    stopWorker();
 
     if (typeof server.closeAllConnections === 'function') {
       server.closeAllConnections();

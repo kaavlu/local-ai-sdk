@@ -33,10 +33,19 @@ CREATE TABLE IF NOT EXISTS agent_state (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS machine_state (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  is_system_idle INTEGER NOT NULL,
+  idle_seconds INTEGER NOT NULL,
+  is_on_ac_power INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
 `;
 
+/** Schema version `2`: adds `machine_state` (single row, Electron-reported eligibility signals). */
 const UPSERT_SCHEMA_VERSION = `
-INSERT INTO agent_state (key, value) VALUES ('schema_version', '1')
+INSERT INTO agent_state (key, value) VALUES ('schema_version', '2')
 ON CONFLICT(key) DO UPDATE SET value = excluded.value;
 `;
 
