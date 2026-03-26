@@ -1,7 +1,7 @@
 {
   "name": "@local-ai/sdk-ts",
   "version": "0.0.1",
-  "description": "Thin TypeScript SDK (placeholder; will call local agent later)",
+  "description": "Thin TypeScript client for the local AI agent HTTP API",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -19,6 +19,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {
+    "@types/node": "^22.10.2",
     "typescript": "^5.7.3"
   }
 }

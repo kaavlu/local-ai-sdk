@@ -1,14 +1,33 @@
 # Local-first AI SDK (prototype)
 
-Monorepo scaffolding for a local-first AI SDK: a TypeScript client library, a small Node HTTP “agent” service, and a minimal Electron demo app. Nothing here performs real AI work yet; APIs are placeholders.
+Monorepo scaffolding for a local-first AI SDK: a TypeScript client library, a small Node HTTP “agent” service, and a minimal Electron demo app. Nothing here performs real AI work yet; the agent uses mock execution.
 
 ## Packages
 
 | Location | Purpose |
 |----------|---------|
-| `packages/sdk-ts` | TypeScript SDK (`@local-ai/sdk-ts`). Thin surface: `enqueueJob`, `getJobStatus`, `getJobResult` — currently throw `"Not implemented"`. Built to `dist/` as a normal library. |
+| `packages/sdk-ts` | TypeScript SDK (`@local-ai/sdk-ts`). Thin HTTP client for the local agent: **`LocalAiSdk`** with typed methods (`healthCheck`, `createJob`, `getJob`, `getJobResult`, `reportMachineState`, `getMachineState`, `getDeviceProfile`, `getDbDebugInfo`, `waitForJobCompletion`). Default base URL **`http://127.0.0.1:8787`**; override via `new LocalAiSdk({ baseUrl: "..." })`. Built to `dist/` as a normal library. |
 | `packages/agent` | Node + TypeScript service (`@local-ai/agent`). Listens on `127.0.0.1:${PORT}` (default `8787`). Serves `GET /health` with `{ "ok": true }`. On startup it creates/opens a local **SQLite** database (via **sql.js**, WASM) and runs idempotent schema DDL. After the DB is ready, it collects a **basic device profile** (OS + release, CPU arch, logical CPU count, total/free RAM in MiB, free disk space in MiB on the agent data volume when available) and upserts it into the `device_profile` table (`id = 1`). Inspect the stored row with `GET /debug/profile`. |
-| `apps/demo-electron` | Minimal Electron app (`demo-electron`). Compiles TypeScript in `src/`, loads `index.html` at the app root, imports `@local-ai/sdk-ts` from the **main** process, and (Step 7) periodically POSTs machine idle/power signals to the agent from the **main** process via `powerMonitor`. |
+| `apps/demo-electron` | Minimal Electron app (`demo-electron`). Compiles TypeScript in `src/`, loads `index.html` at the app root, and uses **`@local-ai/sdk-ts` from the main process only** for agent I/O: periodic machine-state reporting (`LocalAiSdk.reportMachineState`), startup health check (`LocalAiSdk.healthCheck`), and a small **Create Demo Job** button (IPC → main → SDK job + wait + result). |
+
+### SDK usage (Node / TypeScript)
+
+```typescript
+import { LocalAiSdk } from '@local-ai/sdk-ts';
+
+const sdk = new LocalAiSdk(); // default http://127.0.0.1:8787
+
+await sdk.healthCheck();
+
+const job = await sdk.createJob({
+  taskType: 'echo',
+  payload: { text: 'hi' },
+  policy: 'local',
+});
+
+const done = await sdk.waitForJobCompletion(job.id);
+const result = done.state === 'completed' ? await sdk.getJobResult(job.id) : null;
+```
 
 ## Prerequisites
 
@@ -98,21 +117,29 @@ curl -s -X POST http://127.0.0.1:8787/jobs \
 
 ### Step 7: Machine state + worker scheduling gates
 
-- **Reporting:** The Electron demo app sends machine signals to the agent about every **5 seconds** while it is open: `POST http://127.0.0.1:8787/machine-state` with JSON `{ "isSystemIdle", "idleSeconds", "isOnAcPower" }`. Values come from Electron **`powerMonitor`** in the **main** process (`getSystemIdleTime`, `getSystemIdleState`, `onBatteryPower`). Override the agent base URL with **`LOCAL_AGENT_URL`** if needed.
+- **Reporting:** The Electron demo app sends machine signals to the agent about every **5 seconds** while it is open via **`LocalAiSdk.reportMachineState`** (same JSON shape: `{ "isSystemIdle", "idleSeconds", "isOnAcPower" }`). Values come from Electron **`powerMonitor`** in the **main** process (`getSystemIdleTime`, `getSystemIdleState`, `onBatteryPower`). Override the agent base URL with **`LOCAL_AGENT_URL`** if needed (passed into `new LocalAiSdk({ baseUrl: ... })`).
+
+### Step 8: TypeScript SDK + demo integration
+
+- **`packages/sdk-ts`** implements **`LocalAiSdk`**: HTTP-only, typed wrappers around the agent routes listed above (no worker/routing logic in the SDK).
+- **`demo-electron`** uses the SDK in the **main process** for health, machine state, and the optional **Create Demo Job** flow (preload exposes `window.demoAgent.createDemoJob()` → IPC → `createJob` + `waitForJobCompletion` + `getJobResult`). The renderer stays free of SDK imports.
 - **Storage:** The agent upserts a single row in **`machine_state`** (`id = 1`). Inspect with **`GET /debug/machine-state`** (returns `{ exists: false, ... }` until the first POST).
 - **Worker rule (prototype):** The background worker **only** picks **queued** jobs when the latest row satisfies: `is_system_idle = 1`, `idle_seconds >= 10`, and `is_on_ac_power = 1`. If no row exists, the machine is treated as **ineligible** and jobs stay **queued**. The idle threshold is **`MIN_IDLE_SECONDS_FOR_BACKGROUND_WORK`** in `packages/agent/src/worker/eligibility.ts` (easy to change).
 - **Logs:** The worker logs when eligibility flips between allowed and blocked (not every poll). The agent logs when stored machine state **changes** meaningfully (avoids spamming on identical 5s reports).
 
 ## Run the Electron demo (dev)
 
-1. Build the SDK at least once: `npm run build -w @local-ai/sdk-ts`
-2. Start the app:
+1. Start the agent in one terminal: `npm run dev:agent`
+2. Build the SDK at least once: `npm run build -w @local-ai/sdk-ts`
+3. Start the app:
 
 ```bash
 npm run dev:app
 ```
 
 After editing TypeScript, run `npm run dev:app` again (it runs `tsc` then `electron .`).
+
+With the agent running, use **Create Demo Job** in the window to run a minimal echo job through the SDK (job may stay queued until machine-state eligibility is met: idle ≥ 10s, on AC — see Step 7).
 
 ## Scripts (root)
 
