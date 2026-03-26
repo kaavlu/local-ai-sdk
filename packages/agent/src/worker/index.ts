@@ -1,19 +1,35 @@
 import type { Database } from 'sql.js';
-import { failJob, getNextQueuedJob, markJobRunning } from '../jobs/index.js';
-import { runMockJobPipeline } from '../jobs/pipeline.js';
+import { getCloudAvailable } from '../cloud-availability.js';
+import { failJob, listQueuedJobsOrdered, markJobRunning, type JobRecord } from '../jobs/index.js';
+import { runMockJobPipeline, type MockExecutorTarget } from '../jobs/pipeline.js';
+import { resolveExecutionDecision, type ExecutionDecision } from '../policy/index.js';
 import { getLatestDeviceProfile } from '../profiler/index.js';
 import { getLatestMachineState } from '../machine-state/index.js';
-import { isEligibleForBackgroundWork } from './eligibility.js';
+import { evaluateMachineReadiness } from './readiness.js';
 
 /** Polling interval for queued jobs (ms). */
 const POLL_MS = 300;
 
-/** Last computed eligibility (for transition logs only). */
-let lastEligible: boolean | null = null;
+/** Throttle repeated "all queued jobs blocked" logs (ms). */
+const ALL_BLOCKED_LOG_THROTTLE_MS = 5000;
+
+let lastAllBlockedLogAt = 0;
+let lastAllBlockedCount: number | null = null;
+
+function decisionToTarget(d: ExecutionDecision): MockExecutorTarget | null {
+  if (d === 'run_local') {
+    return 'local_mock';
+  }
+  if (d === 'run_cloud') {
+    return 'cloud_mock';
+  }
+  return null;
+}
 
 /**
- * Starts a single-threaded background loop: poll for queued jobs, claim one at a time,
- * run the mock pipeline. Returns `stop` to clear the timer (e.g. on shutdown).
+ * Starts a single-threaded background loop: scan queued jobs in order, pick the first
+ * whose policy resolves to local or cloud execution (avoids head-of-line blocking).
+ * Returns `stop` to clear the timer (e.g. on shutdown).
  */
 export function startWorker(db: Database, dbPath: string): () => void {
   let stopped = false;
@@ -26,49 +42,102 @@ export function startWorker(db: Database, dbPath: string): () => void {
       return;
     }
 
-    const machineState = getLatestMachineState(db);
-    const eligible = isEligibleForBackgroundWork(machineState);
-
-    if (lastEligible !== eligible) {
-      if (eligible) {
-        console.log('[agent] worker: eligibility changed to allowed');
-      } else {
-        console.log('[agent] worker: eligibility changed to blocked');
-      }
-      lastEligible = eligible;
-    }
-
-    if (!eligible) {
+    const queued = listQueuedJobsOrdered(db);
+    if (queued.length === 0) {
       return;
     }
+
+    const machineState = getLatestMachineState(db);
+    const profile = getLatestDeviceProfile(db);
+    const readiness = evaluateMachineReadiness(machineState, profile);
+    const cloudAvailable = getCloudAvailable();
+
+    let picked: JobRecord | null = null;
+    let decision: ExecutionDecision = 'queue';
+    const skippedHead: JobRecord[] = [];
+
+    for (const job of queued) {
+      decision = resolveExecutionDecision({
+        executionPolicy: job.executionPolicy,
+        localMode: job.localMode,
+        machineReadiness: readiness,
+        cloudAvailable,
+      });
+
+      if (decision === 'queue') {
+        skippedHead.push(job);
+        continue;
+      }
+
+      picked = job;
+      break;
+    }
+
+    if (!picked) {
+      const now = Date.now();
+      const shouldLog =
+        lastAllBlockedCount !== queued.length ||
+        now - lastAllBlockedLogAt >= ALL_BLOCKED_LOG_THROTTLE_MS;
+      if (shouldLog) {
+        console.log(
+          '[agent] worker: no runnable job among ' +
+            queued.length +
+            ' queued (all resolve to queue this tick)',
+        );
+        lastAllBlockedLogAt = now;
+        lastAllBlockedCount = queued.length;
+      }
+      return;
+    }
+
+    lastAllBlockedCount = null;
+
+    for (const j of skippedHead) {
+      console.log(
+        '[agent] worker: skip queued job (decision=queue) id=' +
+          j.id +
+          ' executionPolicy=' +
+          j.executionPolicy +
+          ' localMode=' +
+          j.localMode,
+      );
+    }
+
+    const target = decisionToTarget(decision);
+    if (!target) {
+      return;
+    }
+
+    console.log(
+      '[agent] worker: selected job id=' +
+        picked.id +
+        ' executionPolicy=' +
+        picked.executionPolicy +
+        ' localMode=' +
+        picked.localMode +
+        ' decision=' +
+        decision,
+    );
 
     processing = true;
-    const job = getNextQueuedJob(db);
-    if (!job) {
-      processing = false;
-      return;
-    }
 
     try {
-      markJobRunning(db, dbPath, job.id);
+      markJobRunning(db, dbPath, picked.id);
     } catch (err) {
       processing = false;
-      console.error('[agent] worker: markJobRunning failed id=' + job.id, err);
+      console.error('[agent] worker: markJobRunning failed id=' + picked.id, err);
       return;
     }
-
-    console.log('[agent] worker: picked job id=' + job.id);
 
     void (async () => {
       try {
-        const profile = getLatestDeviceProfile(db);
-        await runMockJobPipeline(db, dbPath, job, profile);
+        await runMockJobPipeline(db, dbPath, picked!, target);
       } catch (err) {
-        console.error('[agent] worker: job failed id=' + job.id, err);
+        console.error('[agent] worker: job failed id=' + picked!.id, err);
         try {
-          failJob(db, dbPath, job.id);
+          failJob(db, dbPath, picked!.id);
         } catch (persistErr) {
-          console.error('[agent] worker: failJob persist error id=' + job.id, persistErr);
+          console.error('[agent] worker: failJob persist error id=' + picked!.id, persistErr);
         }
       } finally {
         processing = false;

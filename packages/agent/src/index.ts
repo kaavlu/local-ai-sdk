@@ -19,6 +19,7 @@ import {
   validateMachineStatePostBody,
 } from './machine-state/index.js';
 import { startWorker } from './worker/index.js';
+import { evaluateMachineReadiness, readinessToDebugJson } from './worker/readiness.js';
 
 const PORT = Number(process.env.PORT) || 8787;
 
@@ -108,6 +109,15 @@ async function main(): Promise<void> {
       const stored = getLatestMachineState(db);
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
       res.end(JSON.stringify(machineStateToDebugJson(stored)));
+      return;
+    }
+
+    if (req.method === 'GET' && pathname === '/debug/readiness') {
+      const ms = getLatestMachineState(db);
+      const prof = getLatestDeviceProfile(db);
+      const readiness = evaluateMachineReadiness(ms, prof);
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify(readinessToDebugJson(readiness)));
       return;
     }
 

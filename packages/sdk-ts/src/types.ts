@@ -7,11 +7,26 @@ export interface LocalAiSdkOptions {
   baseUrl?: string;
 }
 
-/** POST /jobs request body (matches agent validation). */
+/** Where a job may or prefers to run (Step 9). */
+export type ExecutionPolicy = 'local_only' | 'cloud_allowed' | 'cloud_preferred';
+
+/** How strict local readiness must be for this job (Step 9). */
+export type LocalMode = 'interactive' | 'background' | 'conservative';
+
+/**
+ * POST /jobs request body.
+ * Provide either legacy `policy` or both `executionPolicy` and `localMode` (preferred when set).
+ */
 export interface CreateJobRequest {
   taskType: string;
   payload: unknown;
-  policy: string;
+  /**
+   * Legacy scheduling hint; mapped server-side to `executionPolicy` + `localMode` when the new fields are omitted.
+   * @see README for mapping (`local`, `local_preferred`, `cloud`).
+   */
+  policy?: string;
+  executionPolicy?: ExecutionPolicy;
+  localMode?: LocalMode;
 }
 
 /** POST /jobs success body (201). */
@@ -20,6 +35,8 @@ export interface CreateJobResponse {
   state: JobState;
   taskType: string;
   policy: string;
+  executionPolicy: ExecutionPolicy;
+  localMode: LocalMode;
   createdAt: number;
 }
 
@@ -32,6 +49,8 @@ export interface JobRecord {
   taskType: string;
   payload: unknown;
   policy: string;
+  executionPolicy: ExecutionPolicy;
+  localMode: LocalMode;
   state: JobState;
   createdAt: number;
   updatedAt: number;

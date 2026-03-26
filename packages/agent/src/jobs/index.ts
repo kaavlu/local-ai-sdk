@@ -1,21 +1,38 @@
 import { randomUUID } from 'node:crypto';
 import type { Database, SqlValue } from 'sql.js';
+import type { ExecutionPolicy, LocalMode } from '../policy/index.js';
 import { persistDatabaseToDisk } from '../db/persist.js';
 
 /** Persisted job lifecycle values (subset used in this step). */
 export type JobState = 'queued' | 'running' | 'completed' | 'failed';
 
+export type { ExecutionPolicy, LocalMode };
+
+const EXECUTION_POLICIES = new Set<ExecutionPolicy>([
+  'local_only',
+  'cloud_allowed',
+  'cloud_preferred',
+]);
+
+const LOCAL_MODES = new Set<LocalMode>(['interactive', 'background', 'conservative']);
+
 export interface CreateJobRequest {
   taskType: string;
   payload: unknown;
-  policy: string;
+  /** Legacy field; mapped to executionPolicy + localMode when new fields are absent. */
+  policy?: string;
+  executionPolicy?: ExecutionPolicy;
+  localMode?: LocalMode;
 }
 
 export interface JobRecord {
   id: string;
   taskType: string;
   payload: unknown;
+  /** Legacy column; kept for backward compatibility. */
   policy: string;
+  executionPolicy: ExecutionPolicy;
+  localMode: LocalMode;
   state: JobState;
   createdAt: number;
   updatedAt: number;
@@ -44,8 +61,101 @@ function parseJobState(raw: string): JobState {
   return 'queued';
 }
 
+function isExecutionPolicy(s: string): s is ExecutionPolicy {
+  return EXECUTION_POLICIES.has(s as ExecutionPolicy);
+}
+
+function isLocalMode(s: string): s is LocalMode {
+  return LOCAL_MODES.has(s as LocalMode);
+}
+
 /**
- * Validates POST /jobs body: taskType and policy non-empty strings; payload present and JSON-serializable.
+ * Legacy `policy` string → execution model (Step 9 backward compatibility).
+ */
+export function mapLegacyPolicyToExecution(
+  policy: string,
+): { executionPolicy: ExecutionPolicy; localMode: LocalMode } {
+  switch (policy) {
+    case 'local':
+      return { executionPolicy: 'local_only', localMode: 'interactive' };
+    case 'local_preferred':
+      return { executionPolicy: 'cloud_allowed', localMode: 'background' };
+    case 'cloud':
+      return { executionPolicy: 'cloud_preferred', localMode: 'interactive' };
+    default:
+      return { executionPolicy: 'local_only', localMode: 'interactive' };
+  }
+}
+
+/** Best-effort legacy `policy` column when persisting from the new model only. */
+export function legacyPolicyColumnFromExecution(executionPolicy: ExecutionPolicy): string {
+  switch (executionPolicy) {
+    case 'local_only':
+      return 'local';
+    case 'cloud_allowed':
+      return 'local_preferred';
+    case 'cloud_preferred':
+      return 'cloud';
+    default:
+      return 'local';
+  }
+}
+
+function normalizeCreateJobInput(body: Record<string, unknown>): CreateJobRequest | null {
+  const taskType = body.taskType;
+  if (typeof taskType !== 'string' || taskType.trim() === '') {
+    return null;
+  }
+
+  if (!Object.prototype.hasOwnProperty.call(body, 'payload')) {
+    return null;
+  }
+
+  const payload = body.payload;
+  try {
+    JSON.stringify(payload);
+  } catch {
+    return null;
+  }
+
+  const ep = body.executionPolicy;
+  const lm = body.localMode;
+  const hasEp = typeof ep === 'string' && ep.trim() !== '';
+  const hasLm = typeof lm === 'string' && lm.trim() !== '';
+
+  if (hasEp !== hasLm) {
+    return null;
+  }
+
+  if (hasEp && hasLm) {
+    if (!isExecutionPolicy(ep) || !isLocalMode(lm)) {
+      return null;
+    }
+    const policyField = body.policy;
+    const legacyPolicy =
+      typeof policyField === 'string' && policyField.trim() !== ''
+        ? policyField
+        : legacyPolicyColumnFromExecution(ep);
+    return {
+      taskType,
+      payload,
+      executionPolicy: ep,
+      localMode: lm,
+      policy: legacyPolicy,
+    };
+  }
+
+  const policy = body.policy;
+  if (typeof policy !== 'string' || policy.trim() === '') {
+    return null;
+  }
+
+  return { taskType, payload, policy };
+}
+
+/**
+ * Validates POST /jobs body: taskType + JSON-serializable payload; either legacy `policy`
+ * or valid `executionPolicy` + `localMode` (preferred when both present).
  */
 export function validateCreateJobRequest(
   body: unknown,
@@ -53,6 +163,7 @@ export function validateCreateJobRequest(
   if (body === null || typeof body !== 'object' || Array.isArray(body)) {
     return { ok: false, message: 'body must be a JSON object' };
   }
+
   const o = body as Record<string, unknown>;
 
   const taskType = o.taskType;
@@ -60,34 +171,86 @@ export function validateCreateJobRequest(
     return { ok: false, message: 'taskType must be a non-empty string' };
   }
 
-  const policy = o.policy;
-  if (typeof policy !== 'string' || policy.trim() === '') {
-    return { ok: false, message: 'policy must be a non-empty string' };
-  }
-
   if (!Object.prototype.hasOwnProperty.call(o, 'payload')) {
     return { ok: false, message: 'payload is required' };
   }
 
-  const payload = o.payload;
   try {
-    JSON.stringify(payload);
+    JSON.stringify(o.payload);
   } catch {
     return { ok: false, message: 'payload must be JSON-serializable' };
   }
 
-  return { ok: true, value: { taskType, policy, payload } };
+  const ep = o.executionPolicy;
+  const lm = o.localMode;
+  const hasEp = typeof ep === 'string' && ep.trim() !== '';
+  const hasLm = typeof lm === 'string' && lm.trim() !== '';
+
+  if (hasEp !== hasLm) {
+    return {
+      ok: false,
+      message: 'executionPolicy and localMode must both be provided together',
+    };
+  }
+
+  if (hasEp && hasLm) {
+    if (!isExecutionPolicy(ep)) {
+      return {
+        ok: false,
+        message: 'executionPolicy must be local_only, cloud_allowed, or cloud_preferred',
+      };
+    }
+    if (!isLocalMode(lm)) {
+      return {
+        ok: false,
+        message: 'localMode must be interactive, background, or conservative',
+      };
+    }
+  }
+
+  const normalized = normalizeCreateJobInput(o);
+  if (!normalized) {
+    return {
+      ok: false,
+      message:
+        'provide policy (legacy) or executionPolicy + localMode; taskType and payload are required',
+    };
+  }
+
+  return { ok: true, value: normalized };
+}
+
+function resolvedExecutionFields(input: CreateJobRequest): {
+  policyColumn: string;
+  executionPolicy: ExecutionPolicy;
+  localMode: LocalMode;
+} {
+  if (input.executionPolicy !== undefined && input.localMode !== undefined) {
+    return {
+      policyColumn: input.policy ?? legacyPolicyColumnFromExecution(input.executionPolicy),
+      executionPolicy: input.executionPolicy,
+      localMode: input.localMode,
+    };
+  }
+  const legacy = input.policy ?? 'local';
+  const mapped = mapLegacyPolicyToExecution(legacy);
+  return {
+    policyColumn: legacy,
+    executionPolicy: mapped.executionPolicy,
+    localMode: mapped.localMode,
+  };
 }
 
 const INSERT_JOB = `
-INSERT INTO jobs (id, task_type, payload_json, policy, state, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?)
+INSERT INTO jobs (id, task_type, payload_json, policy, execution_policy, local_mode, state, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 `;
 
 /**
  * Inserts a job with state `queued` and flushes the database file.
  */
 export function createJob(db: Database, dbPath: string, input: CreateJobRequest): JobRecord {
+  const { policyColumn, executionPolicy, localMode } = resolvedExecutionFields(input);
   const id = generateJobId();
   const now = Date.now();
   const payloadJson = JSON.stringify(input.payload);
@@ -96,7 +259,9 @@ export function createJob(db: Database, dbPath: string, input: CreateJobRequest)
     id,
     input.taskType,
     payloadJson,
-    input.policy,
+    policyColumn,
+    executionPolicy,
+    localMode,
     'queued',
     now,
     now,
@@ -108,7 +273,9 @@ export function createJob(db: Database, dbPath: string, input: CreateJobRequest)
     id,
     taskType: input.taskType,
     payload: input.payload,
-    policy: input.policy,
+    policy: policyColumn,
+    executionPolicy,
+    localMode,
     state: 'queued',
     createdAt: now,
     updatedAt: now,
@@ -167,6 +334,20 @@ export function failJob(db: Database, dbPath: string, jobId: string): void {
   persistDatabaseToDisk(db, dbPath);
 }
 
+function parseExecutionPolicy(raw: string | null | undefined): ExecutionPolicy | null {
+  if (raw == null || raw === '') {
+    return null;
+  }
+  return isExecutionPolicy(String(raw)) ? (String(raw) as ExecutionPolicy) : null;
+}
+
+function parseLocalMode(raw: string | null | undefined): LocalMode | null {
+  if (raw == null || raw === '') {
+    return null;
+  }
+  return isLocalMode(String(raw)) ? (String(raw) as LocalMode) : null;
+}
+
 function rowToJobRecord(row: Record<string, SqlValue>): JobRecord | null {
   const id = row.id != null ? String(row.id) : '';
   const task_type = row.task_type != null ? String(row.task_type) : '';
@@ -175,6 +356,11 @@ function rowToJobRecord(row: Record<string, SqlValue>): JobRecord | null {
   const stateRaw = row.state != null ? String(row.state) : 'queued';
   const created_at = row.created_at;
   const updated_at = row.updated_at;
+
+  let executionPolicy = parseExecutionPolicy(
+    row.execution_policy != null ? String(row.execution_policy) : null,
+  );
+  let localMode = parseLocalMode(row.local_mode != null ? String(row.local_mode) : null);
 
   if (!id) {
     return null;
@@ -190,11 +376,23 @@ function rowToJobRecord(row: Record<string, SqlValue>): JobRecord | null {
     payload = null;
   }
 
+  if (executionPolicy === null || localMode === null) {
+    const mapped = mapLegacyPolicyToExecution(policy || 'local');
+    if (executionPolicy === null) {
+      executionPolicy = mapped.executionPolicy;
+    }
+    if (localMode === null) {
+      localMode = mapped.localMode;
+    }
+  }
+
   return {
     id,
     taskType: task_type,
     payload,
     policy,
+    executionPolicy,
+    localMode,
     state: parseJobState(stateRaw),
     createdAt:
       typeof created_at === 'number' ? created_at : Number(created_at),
@@ -203,37 +401,33 @@ function rowToJobRecord(row: Record<string, SqlValue>): JobRecord | null {
   };
 }
 
-const NEXT_QUEUED = `
-SELECT id, task_type, payload_json, policy, state, created_at, updated_at
-FROM jobs
-WHERE state = 'queued'
-ORDER BY created_at ASC
-LIMIT 1
-`;
+const JOB_SELECT_COLUMNS =
+  'id, task_type, payload_json, policy, execution_policy, local_mode, state, created_at, updated_at';
+
+const QUEUED_ORDERED = `SELECT ${JOB_SELECT_COLUMNS} FROM jobs WHERE state = 'queued' ORDER BY created_at ASC`;
 
 /**
- * Returns the oldest queued job, or null if none.
+ * Lists queued jobs oldest first (for policy-aware scanning without head-of-line blocking).
  */
-export function getNextQueuedJob(db: Database): JobRecord | null {
-  const stmt = db.prepare(NEXT_QUEUED);
-  const hasRow = stmt.step();
-  if (!hasRow) {
-    stmt.free();
-    return null;
+export function listQueuedJobsOrdered(db: Database): JobRecord[] {
+  const stmt = db.prepare(QUEUED_ORDERED);
+  const out: JobRecord[] = [];
+  while (stmt.step()) {
+    const row = stmt.getAsObject() as Record<string, SqlValue>;
+    const rec = rowToJobRecord(row);
+    if (rec) {
+      out.push(rec);
+    }
   }
-  const row = stmt.getAsObject() as Record<string, SqlValue>;
   stmt.free();
-  return rowToJobRecord(row);
+  return out;
 }
 
 /**
  * Loads a job by primary key, or null if missing.
  */
 export function getJobById(db: Database, id: string): JobRecord | null {
-  const stmt = db.prepare(
-    `SELECT id, task_type, payload_json, policy, state, created_at, updated_at
-     FROM jobs WHERE id = ?`,
-  );
+  const stmt = db.prepare(`SELECT ${JOB_SELECT_COLUMNS} FROM jobs WHERE id = ?`);
   stmt.bind([id]);
   const hasRow = stmt.step();
   if (!hasRow) {
@@ -294,6 +488,8 @@ export function jobCreatedResponse(job: JobRecord): Record<string, unknown> {
     state: job.state,
     taskType: job.taskType,
     policy: job.policy,
+    executionPolicy: job.executionPolicy,
+    localMode: job.localMode,
     createdAt: job.createdAt,
   };
 }
@@ -305,6 +501,8 @@ export function jobToJson(job: JobRecord): Record<string, unknown> {
     taskType: job.taskType,
     payload: job.payload,
     policy: job.policy,
+    executionPolicy: job.executionPolicy,
+    localMode: job.localMode,
     state: job.state,
     createdAt: job.createdAt,
     updatedAt: job.updatedAt,
