@@ -107,7 +107,7 @@ export class DynoSdk {
     return this.requestJson<DebugMetricsResponse>('GET', '/debug/metrics');
   }
 
-  /** `GET /debug/models` — embed_text pipeline lifecycle (in-process). */
+  /** `GET /debug/models` — in-process model lifecycle (embed + classify). */
   async getModelDebugInfo(): Promise<ModelDebugInfo> {
     return this.requestJson<ModelDebugInfo>('GET', '/debug/models');
   }
@@ -122,6 +122,18 @@ export class DynoSdk {
       '/models/embed-text/warmup',
     );
     return body.embed_text;
+  }
+
+  /**
+   * `POST /models/classify-text/warmup` — load the classify_text model ahead of jobs.
+   * Throws {@link DynoSdkError} with status 503 if warmup completes in a failed state.
+   */
+  async warmupClassifyTextModel(): Promise<EmbedTextModelDebugRow> {
+    const body = await this.requestJson<{ classify_text: EmbedTextModelDebugRow }>(
+      'POST',
+      '/models/classify-text/warmup',
+    );
+    return body.classify_text;
   }
 
   /**

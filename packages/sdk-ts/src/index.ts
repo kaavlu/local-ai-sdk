@@ -1,6 +1,7 @@
 export { DynoSdk, DynoSdkError } from './client.js';
 export type {
   CancelJobResponse,
+  ClassifyTextPayload,
   CreateJobRequest,
   CreateJobResponse,
   DatabaseDebugInfo,
@@ -20,6 +21,7 @@ export type {
   MachineStateInput,
   MetricsJobStatusCounts,
   ModelDebugInfo,
+  WorkloadModelRuntimeDebugInfo,
   WaitForJobCompletionOptions,
   WorkerDebugInfo,
 } from './types.js';

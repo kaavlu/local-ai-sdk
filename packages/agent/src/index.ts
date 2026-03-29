@@ -20,13 +20,17 @@ import {
   saveMachineState,
   validateMachineStatePostBody,
 } from './machine-state/index.js';
+import { getCloudAvailable } from './cloud-availability.js';
+import { capabilityToDebugJson, evaluateJobCapability } from './capability/index.js';
+import { resolveExecutionDecision, type ExecutionPolicy, type LocalMode } from './policy/index.js';
 import { getWorkerRuntimeSnapshot, startWorker } from './worker/index.js';
 import { getIsWorkerPaused, setWorkerPaused } from './worker/state.js';
+import { getModelsDebugJson } from './models/models-debug.js';
+import { prepareWorkloadModelAccessForTask } from './models/workload-model-runtime.js';
 import {
-  getEmbedTextModelState,
-  getModelsDebugJson,
-  warmupEmbedTextModel,
-} from './models/embed-text-model.js';
+  getReadinessModelFieldsFromWorkloads,
+  listWarmupRoutes,
+} from './workloads/registry.js';
 import {
   getEffectiveMachineReadiness,
   isReadinessBypassActive,
@@ -65,6 +69,20 @@ function json(
 ): void {
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
   res.end(JSON.stringify(body));
+}
+
+function parseExecutionPolicyParam(raw: string | null): ExecutionPolicy | null {
+  if (raw === 'local_only' || raw === 'cloud_allowed' || raw === 'cloud_preferred') {
+    return raw;
+  }
+  return null;
+}
+
+function parseLocalModeParam(raw: string | null): LocalMode | null {
+  if (raw === 'interactive' || raw === 'background' || raw === 'conservative') {
+    return raw;
+  }
+  return null;
 }
 
 async function main(): Promise<void> {
@@ -161,47 +179,124 @@ async function main(): Promise<void> {
       return;
     }
 
+    if (req.method === 'GET' && pathname === '/debug/capability') {
+      const url = new URL(req.url ?? '/', 'http://127.0.0.1');
+      const jobType = url.searchParams.get('jobType')?.trim();
+      if (!jobType) {
+        json(res, 400, {
+          ok: false,
+          error: 'missing_jobType',
+          message: 'Query parameter jobType is required.',
+        });
+        return;
+      }
+      const ms = getLatestMachineState(db);
+      const capability = evaluateJobCapability({
+        jobType,
+        payload: {},
+        machineState: ms,
+      });
+      const body: Record<string, unknown> = {
+        ok: true,
+        capability: capabilityToDebugJson(capability),
+      };
+      if (url.searchParams.get('includePipeline') === '1') {
+        const prof = getLatestDeviceProfile(db);
+        const readiness = getEffectiveMachineReadiness(ms, prof);
+        let executionPolicy: ExecutionPolicy = 'cloud_allowed';
+        if (url.searchParams.has('executionPolicy')) {
+          const p = parseExecutionPolicyParam(url.searchParams.get('executionPolicy'));
+          if (p === null) {
+            json(res, 400, {
+              ok: false,
+              error: 'invalid_executionPolicy',
+              message: 'executionPolicy must be local_only, cloud_allowed, or cloud_preferred.',
+            });
+            return;
+          }
+          executionPolicy = p;
+        }
+        let localMode: LocalMode = 'interactive';
+        if (url.searchParams.has('localMode')) {
+          const m = parseLocalModeParam(url.searchParams.get('localMode'));
+          if (m === null) {
+            json(res, 400, {
+              ok: false,
+              error: 'invalid_localMode',
+              message: 'localMode must be interactive, background, or conservative.',
+            });
+            return;
+          }
+          localMode = m;
+        }
+        const cloudAvailable = getCloudAvailable();
+        const decision = resolveExecutionDecision({
+          executionPolicy,
+          localMode,
+          capability,
+          machineReadiness: readiness,
+          cloudAvailable,
+        });
+        body.pipelinePreview = {
+          executionPolicy,
+          localMode,
+          cloudAvailable,
+          decision,
+          readinessBypass: isReadinessBypassActive(),
+          readiness: {
+            interactiveLocalReady: readiness.interactiveLocalReady,
+            backgroundLocalReady: readiness.backgroundLocalReady,
+            conservativeLocalReady: readiness.conservativeLocalReady,
+          },
+        };
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify(body));
+      return;
+    }
+
     if (req.method === 'GET' && pathname === '/debug/readiness') {
       const ms = getLatestMachineState(db);
       const prof = getLatestDeviceProfile(db);
       const readiness = getEffectiveMachineReadiness(ms, prof);
-      const embedModel = getEmbedTextModelState();
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
       res.end(
         JSON.stringify({
           ...readinessToDebugJson(readiness),
           readinessBypass: isReadinessBypassActive(),
-          embedTextModel: {
-            state: embedModel.state,
-            loadedAt: embedModel.loadedAt,
-            lastError: embedModel.lastError,
-          },
+          ...getReadinessModelFieldsFromWorkloads(),
         }),
       );
       return;
     }
 
-    if (req.method === 'POST' && pathname === '/models/embed-text/warmup') {
-      void (async () => {
-        try {
-          await warmupEmbedTextModel();
-          const st = getEmbedTextModelState();
-          if (st.state === 'failed') {
-            json(res, 503, {
-              error: 'warmup_failed',
-              message: st.lastError ?? 'embed_text model failed to load',
-              embed_text: st,
-            });
-            return;
-          }
-          json(res, 200, { embed_text: st });
-        } catch (e) {
-          const msg = e instanceof Error ? e.message : String(e);
-          console.error('[agent] embed_text_model: warmup endpoint failed:', e);
-          json(res, 500, { error: 'internal_error', message: msg });
+    if (req.method === 'POST') {
+      for (const ep of listWarmupRoutes()) {
+        if (pathname !== ep.path) {
+          continue;
         }
-      })();
-      return;
+        void (async () => {
+          try {
+            prepareWorkloadModelAccessForTask(ep.taskType);
+            await ep.warmup();
+            const st = ep.getState();
+            if (st.state === 'failed') {
+              json(res, 503, {
+                error: 'warmup_failed',
+                message: st.lastError ?? ep.failureLabel,
+                [ep.responseField]: st,
+              });
+              return;
+            }
+            json(res, 200, { [ep.responseField]: st });
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            console.error('[agent] ' + ep.logTag + ': warmup endpoint failed:', e);
+            json(res, 500, { error: 'internal_error', message: msg });
+          }
+        })();
+        return;
+      }
     }
 
     if (req.method === 'POST' && pathname === '/machine-state') {
@@ -281,6 +376,23 @@ async function main(): Promise<void> {
             row.executor +
             ' preview=' +
             JSON.stringify(o.embeddingPreview),
+        );
+      } else if (
+        out !== null &&
+        typeof out === 'object' &&
+        !Array.isArray(out) &&
+        (out as Record<string, unknown>).taskType === 'classify_text'
+      ) {
+        const o = out as Record<string, unknown>;
+        console.log(
+          '[agent] job: result fetched id=' +
+            jobId +
+            ' classify_text label=' +
+            String(o.label) +
+            ' score=' +
+            String(o.score) +
+            ' executor=' +
+            row.executor,
         );
       } else {
         console.log('[agent] job: result fetched id=' + jobId);

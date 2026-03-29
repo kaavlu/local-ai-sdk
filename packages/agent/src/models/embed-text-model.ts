@@ -8,12 +8,15 @@ export type ModelState = 'not_loaded' | 'loading' | 'ready' | 'failed';
 export interface EmbedTextModelStateSnapshot {
   state: ModelState;
   loadedAt: number | null;
+  /** Last warmup or successful pipeline handoff (ms); null when not loaded. */
+  lastUsedAt: number | null;
   lastError: string | null;
 }
 
 let embedState: EmbedTextModelStateSnapshot = {
   state: 'not_loaded',
   loadedAt: null,
+  lastUsedAt: null,
   lastError: null,
 };
 
@@ -24,9 +27,33 @@ export function getEmbedTextModelState(): EmbedTextModelStateSnapshot {
   return { ...embedState };
 }
 
-/** JSON for `GET /debug/models`. */
-export function getModelsDebugJson(): { embed_text: EmbedTextModelStateSnapshot } {
-  return { embed_text: getEmbedTextModelState() };
+/** Marks the model as recently used (warmup or execution). No-op if not ready. */
+export function markEmbedTextModelUsed(): void {
+  if (embedState.state !== 'ready' || !cachedPipeline) {
+    return;
+  }
+  const now = Date.now();
+  embedState = { ...embedState, lastUsedAt: now };
+}
+
+/**
+ * Drops the in-memory pipeline. Skips while loading or if an in-flight load exists.
+ * Caller must ensure no concurrent execution (see workload-model-runtime active task guard).
+ */
+export function unloadEmbedTextModel(): void {
+  if (inFlight !== null || embedState.state === 'loading') {
+    return;
+  }
+  if (cachedPipeline !== null) {
+    console.log('[agent] embed_text_model: unloaded (eviction or residency policy)');
+  }
+  cachedPipeline = null;
+  embedState = {
+    state: 'not_loaded',
+    loadedAt: null,
+    lastUsedAt: null,
+    lastError: null,
+  };
 }
 
 function ensurePipeline(): Promise<FeatureExtractionPipeline> {
@@ -35,19 +62,19 @@ function ensurePipeline(): Promise<FeatureExtractionPipeline> {
   }
   if (!inFlight) {
     inFlight = (async () => {
-      embedState = { state: 'loading', loadedAt: null, lastError: null };
+      embedState = { state: 'loading', loadedAt: null, lastUsedAt: null, lastError: null };
       console.log('[agent] embed_text_model: loading...');
       try {
         const p = await pipeline('feature-extraction', EMBED_TEXT_MODEL_ID);
         cachedPipeline = p as FeatureExtractionPipeline;
         const loadedAt = Date.now();
-        embedState = { state: 'ready', loadedAt, lastError: null };
+        embedState = { state: 'ready', loadedAt, lastUsedAt: loadedAt, lastError: null };
         console.log('[agent] embed_text_model: ready');
         return cachedPipeline;
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
         cachedPipeline = null;
-        embedState = { state: 'failed', loadedAt: null, lastError: msg };
+        embedState = { state: 'failed', loadedAt: null, lastUsedAt: null, lastError: msg };
         console.error('[agent] embed_text_model: failed error=' + msg);
         throw err;
       }
@@ -63,7 +90,9 @@ function ensurePipeline(): Promise<FeatureExtractionPipeline> {
  * After a failure, the next call starts a new load attempt.
  */
 export async function getEmbedTextPipeline(): Promise<FeatureExtractionPipeline> {
-  return ensurePipeline();
+  const p = await ensurePipeline();
+  markEmbedTextModelUsed();
+  return p;
 }
 
 /**
@@ -74,10 +103,12 @@ export async function warmupEmbedTextModel(): Promise<EmbedTextModelStateSnapsho
   console.log('[agent] embed_text_model: warmup requested');
   if (embedState.state === 'ready' && cachedPipeline) {
     console.log('[agent] embed_text_model: warmup skipped (already ready)');
+    markEmbedTextModelUsed();
     return getEmbedTextModelState();
   }
   try {
     await ensurePipeline();
+    markEmbedTextModelUsed();
   } catch {
     /* state already reflects failure */
   }

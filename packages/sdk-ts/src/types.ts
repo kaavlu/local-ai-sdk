@@ -18,6 +18,11 @@ export interface EmbedTextPayload {
   text: string;
 }
 
+/** Payload for `taskType: "classify_text"` (Step 17). */
+export interface ClassifyTextPayload {
+  text: string;
+}
+
 /**
  * POST /jobs request body.
  * Provide either legacy `policy` or both `executionPolicy` and `localMode` (preferred when set).
@@ -167,12 +172,24 @@ export type EmbedTextModelState = 'not_loaded' | 'loading' | 'ready' | 'failed';
 export interface EmbedTextModelDebugRow {
   state: EmbedTextModelState;
   loadedAt: number | null;
+  /** Step 19: last warmup or pipeline use (ms epoch), null when not loaded. */
+  lastUsedAt: number | null;
   lastError: string | null;
+}
+
+/** Step 19: effective workload model runtime controls (echoed on `GET /debug/models`). */
+export interface WorkloadModelRuntimeDebugInfo {
+  idleEvictAfterMs: number;
+  maxResidentWorkloadModels: number;
+  defaultExecutionTimeoutMs: number;
+  perWorkloadExecutionTimeoutMs: Record<string, number>;
 }
 
 /** `GET /debug/models` response. */
 export interface ModelDebugInfo {
+  workloadModelRuntime: WorkloadModelRuntimeDebugInfo;
   embed_text: EmbedTextModelDebugRow;
+  classify_text: EmbedTextModelDebugRow;
 }
 
 /** Per-status counts (Step 14 metrics). */
@@ -211,6 +228,13 @@ export interface DebugMetricsResponse {
         modelId: string;
         state: EmbedTextModelState;
         loadedAt: number | null;
+        lastUsedAt: number | null;
+      };
+      classifyText: {
+        modelId: string;
+        state: EmbedTextModelState;
+        loadedAt: number | null;
+        lastUsedAt: number | null;
       };
     };
   };

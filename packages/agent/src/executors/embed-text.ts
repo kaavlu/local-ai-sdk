@@ -1,22 +1,9 @@
 import type { Tensor } from '@huggingface/transformers';
 import type { JobRecord } from '../jobs/index.js';
 import { getEmbedTextPipeline } from '../models/embed-text-model.js';
-
-/** Wall-clock limit for model load + inference (first run may download weights). */
-const EMBED_TEXT_TIMEOUT_MS = 300_000;
+import { parseNonEmptyTextPayload } from '../workloads/payload-validation.js';
 
 const PREVIEW_LEN = 8;
-
-function parseEmbedTextPayload(payload: unknown): string {
-  if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) {
-    throw new Error('embed_text payload must be an object with a non-empty string field "text"');
-  }
-  const text = (payload as Record<string, unknown>).text;
-  if (typeof text !== 'string' || text.trim() === '') {
-    throw new Error('embed_text payload must include a non-empty string field "text"');
-  }
-  return text;
-}
 
 function tensorToEmbeddingVector(tensor: Tensor): number[] {
   const raw = tensor.data;
@@ -27,24 +14,6 @@ function tensorToEmbeddingVector(tensor: Tensor): number[] {
     return raw.flatMap((x) => (typeof x === 'number' ? [x] : Array.from(x as Iterable<number>)));
   }
   throw new Error('Unexpected embedding tensor data layout');
-}
-
-function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const id = setTimeout(() => {
-      reject(new Error(`${label} timed out after ${ms}ms`));
-    }, ms);
-    promise.then(
-      (v) => {
-        clearTimeout(id);
-        resolve(v);
-      },
-      (e) => {
-        clearTimeout(id);
-        reject(e);
-      },
-    );
-  });
 }
 
 export interface EmbedTextJobResult {
@@ -65,7 +34,7 @@ export async function executeLocalEmbedText(job: JobRecord): Promise<EmbedTextJo
     throw new Error('executeLocalEmbedText requires taskType "embed_text"');
   }
 
-  const text = parseEmbedTextPayload(job.payload);
+  const text = parseNonEmptyTextPayload('embed_text', job.payload);
 
   const run = async (): Promise<EmbedTextJobResult> => {
     const pipe = await getEmbedTextPipeline();
@@ -87,7 +56,7 @@ export async function executeLocalEmbedText(job: JobRecord): Promise<EmbedTextJo
   };
 
   try {
-    return await withTimeout(run(), EMBED_TEXT_TIMEOUT_MS, 'embed_text (load or inference)');
+    return await run();
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error('[agent] embed_text: execution failed id=' + job.id + ':', err);

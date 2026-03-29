@@ -1,5 +1,9 @@
 import type { Database, SqlValue } from 'sql.js';
 import { MAX_JOB_ATTEMPTS } from '../jobs/index.js';
+import {
+  CLASSIFY_TEXT_MODEL_ID,
+  getClassifyTextModelState,
+} from '../models/classify-text-model.js';
 import { EMBED_TEXT_MODEL_ID, getEmbedTextModelState } from '../models/embed-text-model.js';
 import { getWorkerRuntimeSnapshot } from '../worker/index.js';
 import { getIsWorkerPaused } from '../worker/state.js';
@@ -192,6 +196,7 @@ export function getDebugMetricsJson(db: Database): Record<string, unknown> {
   const isPaused = getIsWorkerPaused(db);
   const rt = getWorkerRuntimeSnapshot();
   const embed = getEmbedTextModelState();
+  const classify = getClassifyTextModelState();
 
   return {
     ok: true,
@@ -218,6 +223,13 @@ export function getDebugMetricsJson(db: Database): Record<string, unknown> {
           modelId: EMBED_TEXT_MODEL_ID,
           state: embed.state,
           loadedAt: embed.loadedAt,
+          lastUsedAt: embed.lastUsedAt,
+        },
+        classifyText: {
+          modelId: CLASSIFY_TEXT_MODEL_ID,
+          state: classify.state,
+          loadedAt: classify.loadedAt,
+          lastUsedAt: classify.lastUsedAt,
         },
       },
     },

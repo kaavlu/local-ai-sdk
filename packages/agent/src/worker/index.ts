@@ -8,6 +8,7 @@ import {
   type JobRecord,
 } from '../jobs/index.js';
 import { runMockJobPipeline, type MockExecutorTarget } from '../jobs/pipeline.js';
+import { evaluateJobCapability, type CapabilityResult } from '../capability/index.js';
 import { resolveExecutionDecision, type ExecutionDecision } from '../policy/index.js';
 import { getLatestDeviceProfile } from '../profiler/index.js';
 import { getLatestMachineState } from '../machine-state/index.js';
@@ -80,23 +81,31 @@ export function startWorker(db: Database, dbPath: string): () => void {
     const cloudAvailable = getCloudAvailable();
 
     let picked: JobRecord | null = null;
+    let pickedCapability: CapabilityResult | null = null;
     let decision: ExecutionDecision = 'queue';
-    const skippedHead: JobRecord[] = [];
+    const skippedHead: { job: JobRecord; capability: CapabilityResult }[] = [];
 
     for (const job of queued) {
+      const capability = evaluateJobCapability({
+        jobType: job.taskType,
+        payload: job.payload,
+        machineState,
+      });
       decision = resolveExecutionDecision({
         executionPolicy: job.executionPolicy,
         localMode: job.localMode,
+        capability,
         machineReadiness: readiness,
         cloudAvailable,
       });
 
       if (decision === 'queue') {
-        skippedHead.push(job);
+        skippedHead.push({ job, capability });
         continue;
       }
 
       picked = job;
+      pickedCapability = capability;
       break;
     }
 
@@ -119,10 +128,14 @@ export function startWorker(db: Database, dbPath: string): () => void {
 
     lastAllBlockedCount = null;
 
-    for (const j of skippedHead) {
+    for (const { job: j, capability: cap } of skippedHead) {
       console.log(
         '[agent] worker: skip queued job (decision=queue) id=' +
           j.id +
+          ' taskType=' +
+          j.taskType +
+          ' canRunLocally=' +
+          cap.canRunLocally +
           ' executionPolicy=' +
           j.executionPolicy +
           ' localMode=' +
@@ -135,7 +148,14 @@ export function startWorker(db: Database, dbPath: string): () => void {
       return;
     }
 
-    console.log('[agent] worker: picked job id=' + picked.id);
+    console.log(
+      '[agent] worker: picked job id=' +
+        picked.id +
+        ' taskType=' +
+        picked.taskType +
+        ' canRunLocally=' +
+        pickedCapability!.canRunLocally,
+    );
 
     let attempt: number | null;
     try {

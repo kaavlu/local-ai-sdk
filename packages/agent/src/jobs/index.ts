@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { Database, SqlValue } from 'sql.js';
 import type { ExecutionPolicy, LocalMode } from '../policy/index.js';
 import { persistDatabaseToDisk } from '../db/persist.js';
+import { validatePayloadForKnownTask } from '../workloads/registry.js';
 
 /** Max execution attempts per job (claim increments `attempt_count`; Step 12). */
 export const MAX_JOB_ATTEMPTS = 3;
@@ -227,6 +228,11 @@ export function validateCreateJobRequest(
       message:
         'provide policy (legacy) or executionPolicy + localMode; taskType and payload are required',
     };
+  }
+
+  const payloadCheck = validatePayloadForKnownTask(normalized.taskType, normalized.payload);
+  if (!payloadCheck.ok) {
+    return { ok: false, message: payloadCheck.message };
   }
 
   return { ok: true, value: normalized };
