@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Local AI SDK — Demo</title>
+    <title>Dyno — Demo</title>
     <style>
       body {
         font-family: system-ui, sans-serif;
@@ -12,10 +12,13 @@
     </style>
   </head>
   <body>
-    <h1>Local AI SDK — Demo</h1>
+    <h1>Dyno — Demo</h1>
     <p id="root"></p>
+    <p id="model-debug-line" style="font-size: 0.9rem; color: #333"></p>
     <p>
       <button type="button" id="demo-job-btn">Create Demo Job</button>
+      <button type="button" id="embedding-job-btn">Create Embedding Job</button>
+      <button type="button" id="warmup-embed-btn">Warm Up Embedding Model</button>
     </p>
     <pre id="job-out" style="white-space: pre-wrap"></pre>
     <script src="./dist/renderer.js"></script>

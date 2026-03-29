@@ -3,8 +3,13 @@ import type { Database, SqlValue } from 'sql.js';
 import type { ExecutionPolicy, LocalMode } from '../policy/index.js';
 import { persistDatabaseToDisk } from '../db/persist.js';
 
+/** Max execution attempts per job (claim increments `attempt_count`; Step 12). */
+export const MAX_JOB_ATTEMPTS = 3;
+
+const MAX_ERROR_STRING_LEN = 2000;
+
 /** Persisted job lifecycle values (subset used in this step). */
-export type JobState = 'queued' | 'running' | 'completed' | 'failed';
+export type JobState = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
 
 export type { ExecutionPolicy, LocalMode };
 
@@ -36,6 +41,12 @@ export interface JobRecord {
   state: JobState;
   createdAt: number;
   updatedAt: number;
+  /** First transition to `running` (ms); preserved across retries (Step 14). */
+  startedAt: number | null;
+  /** Set for terminal states completed / failed / cancelled (Step 14). */
+  finishedAt: number | null;
+  attemptCount: number;
+  lastError: string | null;
 }
 
 export interface JobResultRecord {
@@ -54,7 +65,8 @@ function parseJobState(raw: string): JobState {
     raw === 'queued' ||
     raw === 'running' ||
     raw === 'completed' ||
-    raw === 'failed'
+    raw === 'failed' ||
+    raw === 'cancelled'
   ) {
     return raw;
   }
@@ -242,8 +254,8 @@ function resolvedExecutionFields(input: CreateJobRequest): {
 }
 
 const INSERT_JOB = `
-INSERT INTO jobs (id, task_type, payload_json, policy, execution_policy, local_mode, state, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO jobs (id, task_type, payload_json, policy, execution_policy, local_mode, state, created_at, updated_at, attempt_count, last_error, started_at, finished_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `;
 
 /**
@@ -265,6 +277,10 @@ export function createJob(db: Database, dbPath: string, input: CreateJobRequest)
     'queued',
     now,
     now,
+    0,
+    null,
+    null,
+    null,
   ]);
 
   persistDatabaseToDisk(db, dbPath);
@@ -279,20 +295,44 @@ export function createJob(db: Database, dbPath: string, input: CreateJobRequest)
     state: 'queued',
     createdAt: now,
     updatedAt: now,
+    attemptCount: 0,
+    lastError: null,
+    startedAt: null,
+    finishedAt: null,
   };
 }
 
-const UPDATE_JOB_STATE = `
-UPDATE jobs SET state = ?, updated_at = ? WHERE id = ?
-`;
+function formatErrorForStorage(err: unknown): string {
+  const raw =
+    err instanceof Error ? err.stack ?? err.message : String(err);
+  if (raw.length <= MAX_ERROR_STRING_LEN) {
+    return raw;
+  }
+  return raw.slice(0, MAX_ERROR_STRING_LEN) + '...';
+}
 
 /**
- * Sets job state to `running` and persists.
+ * Atomically claims a queued job: `running`, increments `attempt_count`, clears `last_error`.
+ * Returns attempt number, or `null` if the job was no longer `queued` (e.g. cancelled).
  */
-export function markJobRunning(db: Database, dbPath: string, jobId: string): void {
+export function tryMarkJobRunning(db: Database, dbPath: string, jobId: string): number | null {
   const now = Date.now();
-  db.run(UPDATE_JOB_STATE, ['running', now, jobId]);
+  db.run(
+    `UPDATE jobs SET state = 'running', attempt_count = attempt_count + 1, last_error = NULL, updated_at = ?, started_at = COALESCE(started_at, ?) WHERE id = ? AND state = 'queued'`,
+    [now, now, jobId],
+  );
+  if (db.getRowsModified() !== 1) {
+    return null;
+  }
+  const stmt = db.prepare(`SELECT attempt_count FROM jobs WHERE id = ?`);
+  stmt.bind([jobId]);
+  stmt.step();
+  const row = stmt.getAsObject() as Record<string, SqlValue>;
+  stmt.free();
+  const ac = row.attempt_count;
+  const n = typeof ac === 'number' ? ac : Number(ac);
   persistDatabaseToDisk(db, dbPath);
+  return Number.isFinite(n) ? n : 0;
 }
 
 const INSERT_RESULT = `
@@ -317,21 +357,114 @@ export function saveJobResult(
 }
 
 /**
- * Sets job state to `completed` and persists.
+ * Sets job state to `completed`, clears `last_error`, and persists.
  */
 export function completeJob(db: Database, dbPath: string, jobId: string): void {
   const now = Date.now();
-  db.run(UPDATE_JOB_STATE, ['completed', now, jobId]);
+  db.run(
+    `UPDATE jobs SET state = 'completed', last_error = NULL, updated_at = ?, finished_at = ? WHERE id = ?`,
+    [now, now, jobId],
+  );
   persistDatabaseToDisk(db, dbPath);
 }
 
 /**
- * Sets job state to `failed` and persists (no `results` row).
+ * Sets job state to `failed` with `last_error` and persists (no `results` row).
  */
-export function failJob(db: Database, dbPath: string, jobId: string): void {
+export function failJob(db: Database, dbPath: string, jobId: string, lastError: string): void {
   const now = Date.now();
-  db.run(UPDATE_JOB_STATE, ['failed', now, jobId]);
+  db.run(
+    `UPDATE jobs SET state = 'failed', last_error = ?, updated_at = ?, finished_at = ? WHERE id = ?`,
+    [lastError, now, now, jobId],
+  );
   persistDatabaseToDisk(db, dbPath);
+}
+
+/**
+ * Returns a queued job to the queue after a failed attempt (retry path).
+ */
+export function requeueJob(db: Database, dbPath: string, jobId: string, lastError: string): void {
+  const now = Date.now();
+  db.run(`UPDATE jobs SET state = 'queued', last_error = ?, updated_at = ? WHERE id = ?`, [
+    lastError,
+    now,
+    jobId,
+  ]);
+  persistDatabaseToDisk(db, dbPath);
+}
+
+const RECOVERY_LAST_ERROR = 'Recovered from interrupted run on agent startup';
+
+/**
+ * Requeues every `running` job (assumed stale after crash) and persists once.
+ */
+export function recoverRunningJobsOnStartup(db: Database, dbPath: string): number {
+  const listStmt = db.prepare(`SELECT id FROM jobs WHERE state = 'running'`);
+  const ids: string[] = [];
+  while (listStmt.step()) {
+    const row = listStmt.getAsObject() as Record<string, SqlValue>;
+    if (row.id != null) {
+      ids.push(String(row.id));
+    }
+  }
+  listStmt.free();
+
+  const n = ids.length;
+  if (n > 0) {
+    const now = Date.now();
+    const upd = db.prepare(
+      `UPDATE jobs SET state = 'queued', last_error = ?, updated_at = ? WHERE id = ?`,
+    );
+    for (const id of ids) {
+      upd.run([RECOVERY_LAST_ERROR, now, id]);
+    }
+    upd.free();
+    persistDatabaseToDisk(db, dbPath);
+  }
+  console.log('[agent] recovery: requeued ' + n + ' stale running jobs');
+  return n;
+}
+
+/**
+ * After executor failure while `running`: requeue if attempts remain, else fail permanently.
+ */
+export function handleExecutionFailure(
+  db: Database,
+  dbPath: string,
+  jobId: string,
+  err: unknown,
+): void {
+  const msg = formatErrorForStorage(err);
+  const job = getJobById(db, jobId);
+  if (!job) {
+    console.error('[agent] job: failure handler missing job id=' + jobId);
+    return;
+  }
+  if (job.state !== 'running') {
+    return;
+  }
+  const attempt = job.attemptCount;
+  if (attempt < MAX_JOB_ATTEMPTS) {
+    requeueJob(db, dbPath, jobId, msg);
+    console.log(
+      '[agent] job: requeued after failure id=' +
+        jobId +
+        ' attempt=' +
+        attempt +
+        '/' +
+        MAX_JOB_ATTEMPTS,
+    );
+  } else {
+    failJob(db, dbPath, jobId, msg);
+    console.log(
+      '[agent] job: permanently failed id=' +
+        jobId +
+        ' attempt=' +
+        attempt +
+        '/' +
+        MAX_JOB_ATTEMPTS,
+    );
+  }
 }
 
 function parseExecutionPolicy(raw: string | null | undefined): ExecutionPolicy | null {
@@ -356,6 +489,27 @@ function rowToJobRecord(row: Record<string, SqlValue>): JobRecord | null {
   const stateRaw = row.state != null ? String(row.state) : 'queued';
   const created_at = row.created_at;
   const updated_at = row.updated_at;
+  const attemptRaw = row.attempt_count;
+  const attemptCount =
+    attemptRaw === null || attemptRaw === undefined
+      ? 0
+      : typeof attemptRaw === 'number'
+        ? attemptRaw
+        : Number(attemptRaw);
+  const le = row.last_error;
+  const lastError =
+    le === null || le === undefined || String(le) === '' ? null : String(le);
+
+  const sa = row.started_at;
+  const startedAt =
+    sa === null || sa === undefined
+      ? null
+      : (typeof sa === 'number' ? sa : Number(sa));
+  const fa = row.finished_at;
+  const finishedAt =
+    fa === null || fa === undefined
+      ? null
+      : (typeof fa === 'number' ? fa : Number(fa));
 
   let executionPolicy = parseExecutionPolicy(
     row.execution_policy != null ? String(row.execution_policy) : null,
@@ -398,13 +552,38 @@ function rowToJobRecord(row: Record<string, SqlValue>): JobRecord | null {
       typeof created_at === 'number' ? created_at : Number(created_at),
     updatedAt:
       typeof updated_at === 'number' ? updated_at : Number(updated_at),
+    startedAt:
+      startedAt !== null && Number.isFinite(startedAt) ? startedAt : null,
+    finishedAt:
+      finishedAt !== null && Number.isFinite(finishedAt) ? finishedAt : null,
+    attemptCount: Number.isFinite(attemptCount) ? attemptCount : 0,
+    lastError,
   };
 }
 
 const JOB_SELECT_COLUMNS =
-  'id, task_type, payload_json, policy, execution_policy, local_mode, state, created_at, updated_at';
+  'id, task_type, payload_json, policy, execution_policy, local_mode, state, created_at, updated_at, started_at, finished_at, attempt_count, last_error';
 
 const QUEUED_ORDERED = `SELECT ${JOB_SELECT_COLUMNS} FROM jobs WHERE state = 'queued' ORDER BY created_at ASC`;
+
+/**
+ * Lists jobs currently marked `running`.
+ */
+export function listRunningJobs(db: Database): JobRecord[] {
+  const stmt = db.prepare(
+    `SELECT ${JOB_SELECT_COLUMNS} FROM jobs WHERE state = 'running' ORDER BY created_at ASC`,
+  );
+  const out: JobRecord[] = [];
+  while (stmt.step()) {
+    const row = stmt.getAsObject() as Record<string, SqlValue>;
+    const rec = rowToJobRecord(row);
+    if (rec) {
+      out.push(rec);
+    }
+  }
+  stmt.free();
+  return out;
+}
 
 /**
  * Lists queued jobs oldest first (for policy-aware scanning without head-of-line blocking).
@@ -437,6 +616,48 @@ export function getJobById(db: Database, id: string): JobRecord | null {
   const row = stmt.getAsObject() as Record<string, SqlValue>;
   stmt.free();
   return rowToJobRecord(row);
+}
+
+export type CancelJobResult =
+  | { ok: true; outcome: 'cancelled' | 'already_terminal'; job: JobRecord }
+  | { ok: false; reason: 'running_not_supported'; job: JobRecord };
+
+/**
+ * Queued → cancelled. Running → conflict (caller returns 409). Terminal → idempotent success.
+ * Uses `WHERE state='queued'` so a concurrent worker claim does not get overwritten.
+ */
+export function cancelJob(db: Database, dbPath: string, jobId: string): CancelJobResult | null {
+  const job = getJobById(db, jobId);
+  if (!job) {
+    return null;
+  }
+
+  if (job.state === 'running') {
+    return { ok: false, reason: 'running_not_supported', job };
+  }
+  if (job.state === 'completed' || job.state === 'failed' || job.state === 'cancelled') {
+    return { ok: true, outcome: 'already_terminal', job };
+  }
+
+  const now = Date.now();
+  db.run(
+    `UPDATE jobs SET state = 'cancelled', updated_at = ?, finished_at = ? WHERE id = ? AND state = 'queued'`,
+    [now, now, jobId],
+  );
+  if (db.getRowsModified() !== 1) {
+    const j2 = getJobById(db, jobId);
+    if (!j2) {
+      return null;
+    }
+    if (j2.state === 'running') {
+      return { ok: false, reason: 'running_not_supported', job: j2 };
+    }
+    return { ok: true, outcome: 'already_terminal', job: j2 };
+  }
+
+  persistDatabaseToDisk(db, dbPath);
+  const j3 = getJobById(db, jobId);
+  return j3 ? { ok: true, outcome: 'cancelled', job: j3 } : null;
 }
 
 /**
@@ -491,6 +712,10 @@ export function jobCreatedResponse(job: JobRecord): Record<string, unknown> {
     executionPolicy: job.executionPolicy,
     localMode: job.localMode,
     createdAt: job.createdAt,
+    startedAt: job.startedAt,
+    finishedAt: job.finishedAt,
+    attemptCount: job.attemptCount,
+    lastError: job.lastError,
   };
 }
 
@@ -506,6 +731,10 @@ export function jobToJson(job: JobRecord): Record<string, unknown> {
     state: job.state,
     createdAt: job.createdAt,
     updatedAt: job.updatedAt,
+    startedAt: job.startedAt,
+    finishedAt: job.finishedAt,
+    attemptCount: job.attemptCount,
+    lastError: job.lastError,
   };
 }
 

@@ -1,6 +1,12 @@
 node_modules/
 dist/
+.dyno-agent-data/
 .local-agent-data/
 *.log
 .DS_Store
 out/
+
+# Step N verification harnesses and captured output (local dev only)
+scripts/step*-verify*.ps1
+scripts/step*-verify*.txt
+scripts/step*-manual-verify.ps1

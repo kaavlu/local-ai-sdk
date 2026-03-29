@@ -1,7 +1,7 @@
 {
-  "name": "@local-ai/agent",
+  "name": "@dyno/agent",
   "version": "0.0.1",
-  "description": "Local background agent service: HTTP API + local SQLite persistence (prototype)",
+  "description": "Dyno agent service: HTTP API + local SQLite persistence",
   "type": "module",
   "main": "./dist/index.js",
   "scripts": {
@@ -12,6 +12,7 @@
     "reset": "node ./scripts/reset-agent.mjs"
   },
   "dependencies": {
+    "@huggingface/transformers": "^3.8.1",
     "sql.js": "^1.12.0"
   },
   "devDependencies": {

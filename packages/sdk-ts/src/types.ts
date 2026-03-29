@@ -1,7 +1,7 @@
 /** SDK constructor options. */
-export interface LocalAiSdkOptions {
+export interface DynoSdkOptions {
   /**
-   * Base URL of the local agent HTTP API (no trailing slash).
+   * Base URL of the Dyno agent HTTP API (no trailing slash).
    * @default "http://127.0.0.1:8787"
    */
   baseUrl?: string;
@@ -12,6 +12,11 @@ export type ExecutionPolicy = 'local_only' | 'cloud_allowed' | 'cloud_preferred'
 
 /** How strict local readiness must be for this job (Step 9). */
 export type LocalMode = 'interactive' | 'background' | 'conservative';
+
+/** Payload for `taskType: "embed_text"` (Step 10). */
+export interface EmbedTextPayload {
+  text: string;
+}
 
 /**
  * POST /jobs request body.
@@ -38,10 +43,14 @@ export interface CreateJobResponse {
   executionPolicy: ExecutionPolicy;
   localMode: LocalMode;
   createdAt: number;
+  startedAt: number | null;
+  finishedAt: number | null;
+  attemptCount: number;
+  lastError: string | null;
 }
 
 /** Job lifecycle states returned by the agent. */
-export type JobState = 'queued' | 'running' | 'completed' | 'failed';
+export type JobState = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
 
 /** GET /jobs/:id response. */
 export interface JobRecord {
@@ -54,6 +63,10 @@ export interface JobRecord {
   state: JobState;
   createdAt: number;
   updatedAt: number;
+  startedAt: number | null;
+  finishedAt: number | null;
+  attemptCount: number;
+  lastError: string | null;
 }
 
 /** GET /jobs/:id/result response. */
@@ -64,11 +77,35 @@ export interface JobResultRecord {
   completedAt: number;
 }
 
-/** POST /machine-state request body. */
+/** POST /jobs/:id/cancel success (200). */
+export interface CancelJobResponse {
+  ok: true;
+  id: string;
+  state: JobState;
+  outcome: 'cancelled' | 'already_terminal';
+}
+
+/** GET /debug/worker response. */
+export interface WorkerDebugInfo {
+  isPaused: boolean;
+  jobInFlight: boolean;
+  currentRunningJobId: string | null;
+  pollIntervalMs: number;
+}
+
+/** POST /machine-state request body (Step 15 optional signals). Omitted keys keep prior agent values. */
 export interface MachineStateInput {
   isSystemIdle: boolean;
   idleSeconds: number;
   isOnAcPower: boolean;
+  cpuUtilizationPercent?: number | null;
+  memoryAvailableMb?: number | null;
+  memoryUsedPercent?: number | null;
+  gpuUtilizationPercent?: number | null;
+  gpuMemoryFreeMb?: number | null;
+  gpuMemoryUsedMb?: number | null;
+  batteryPercent?: number | null;
+  thermalState?: string | null;
 }
 
 /** GET /debug/machine-state response. */
@@ -79,6 +116,14 @@ export type MachineStateDebugRecord =
       isSystemIdle: boolean;
       idleSeconds: number;
       isOnAcPower: boolean;
+      cpuUtilizationPercent: number | null;
+      memoryAvailableMb: number | null;
+      memoryUsedPercent: number | null;
+      gpuUtilizationPercent: number | null;
+      gpuMemoryFreeMb: number | null;
+      gpuMemoryUsedMb: number | null;
+      batteryPercent: number | null;
+      thermalState: string | null;
       updatedAt: number;
     };
 
@@ -103,14 +148,70 @@ export interface DeviceProfileRecord {
 export interface DatabaseDebugInfo {
   path: string;
   tables: string[];
-  counts: { jobs: number; results: number };
+  counts: { jobs: number; results: number; runningJobs: number };
   schema_version: string | null;
   device_profile_row: boolean;
   machine_state_row: boolean;
 }
 
-/** Options for {@link LocalAiSdk.waitForJobCompletion}. */
+/** Options for {@link DynoSdk.waitForJobCompletion}. */
 export interface WaitForJobCompletionOptions {
   pollIntervalMs?: number;
   timeoutMs?: number;
+}
+
+/** In-process embed_text model lifecycle (Step 11). */
+export type EmbedTextModelState = 'not_loaded' | 'loading' | 'ready' | 'failed';
+
+/** One row under `GET /debug/models` and `embed_text` in warmup responses. */
+export interface EmbedTextModelDebugRow {
+  state: EmbedTextModelState;
+  loadedAt: number | null;
+  lastError: string | null;
+}
+
+/** `GET /debug/models` response. */
+export interface ModelDebugInfo {
+  embed_text: EmbedTextModelDebugRow;
+}
+
+/** Per-status counts (Step 14 metrics). */
+export interface MetricsJobStatusCounts {
+  total: number;
+  queued: number;
+  running: number;
+  completed: number;
+  failed: number;
+  cancelled: number;
+}
+
+/** `GET /debug/metrics` response. */
+export interface DebugMetricsResponse {
+  ok: true;
+  metrics: {
+    jobs: MetricsJobStatusCounts;
+    jobTypes: Record<string, MetricsJobStatusCounts>;
+    timingMs: {
+      avgQueueMs: number;
+      avgRunMs: number;
+      avgEndToEndMs: number;
+    };
+    retries: {
+      jobsRetried: number;
+      totalAttempts: number;
+      maxAttemptsConfigured: number;
+    };
+    worker: {
+      isPaused: boolean;
+      currentRunningJobId: string | null;
+      jobInFlight: boolean;
+    };
+    models: {
+      embedText: {
+        modelId: string;
+        state: EmbedTextModelState;
+        loadedAt: number | null;
+      };
+    };
+  };
 }

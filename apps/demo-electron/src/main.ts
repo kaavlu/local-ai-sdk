@@ -1,11 +1,14 @@
 import path from 'node:path';
+import os from 'node:os';
 import { app, BrowserWindow, ipcMain, powerMonitor } from 'electron';
-import { LocalAiSdk } from '@local-ai/sdk-ts';
+import type { MachineStateInput } from '@dyno/sdk-ts';
+import { DynoSdk } from '@dyno/sdk-ts';
 
-/** Base URL for the local agent (override with LOCAL_AGENT_URL). */
-const AGENT_BASE_URL = process.env.LOCAL_AGENT_URL ?? 'http://127.0.0.1:8787';
+/** Base URL for the Dyno agent (override with `DYNO_AGENT_URL`; legacy `LOCAL_AGENT_URL` still honored). */
+const AGENT_BASE_URL =
+  (process.env.DYNO_AGENT_URL ?? process.env.LOCAL_AGENT_URL)?.trim() || 'http://127.0.0.1:8787';
 
-const sdk = new LocalAiSdk({ baseUrl: AGENT_BASE_URL });
+const sdk = new DynoSdk({ baseUrl: AGENT_BASE_URL });
 
 /** How often to report machine state to the agent (ms). */
 const MACHINE_STATE_INTERVAL_MS = 5000;
@@ -37,12 +40,34 @@ function postMachineStateToAgent(): void {
   const isSystemIdle = idleState === 'idle' || idleState === 'locked';
   const isOnAcPower = !powerMonitor.onBatteryPower;
 
+  const totalMem = os.totalmem();
+  const freeMem = os.freemem();
+  const memoryAvailableMb = Math.floor(freeMem / (1024 * 1024));
+  const memoryUsedPercent =
+    totalMem > 0 ? Math.round(100 * (1 - freeMem / totalMem)) : undefined;
+
+  const body: MachineStateInput = {
+    isSystemIdle,
+    idleSeconds,
+    isOnAcPower,
+    memoryAvailableMb,
+  };
+  if (memoryUsedPercent !== undefined) {
+    body.memoryUsedPercent = memoryUsedPercent;
+  }
+
+  const thermalFn = (
+    powerMonitor as typeof powerMonitor & { getCurrentThermalState?: () => string }
+  ).getCurrentThermalState;
+  if (typeof thermalFn === 'function') {
+    const thermalState = thermalFn.call(powerMonitor);
+    if (thermalState != null && thermalState !== 'unknown') {
+      body.thermalState = thermalState;
+    }
+  }
+
   void sdk
-    .reportMachineState({
-      isSystemIdle,
-      idleSeconds,
-      isOnAcPower,
-    })
+    .reportMachineState(body)
     .then(() => {
       /* ok */
     })
@@ -65,6 +90,39 @@ app.whenReady().then(() => {
     const finalJob = await sdk.waitForJobCompletion(created.id, {
       pollIntervalMs: 300,
       timeoutMs: 60_000,
+    });
+    let result: Awaited<ReturnType<typeof sdk.getJobResult>> | null = null;
+    if (finalJob.state === 'completed') {
+      result = await sdk.getJobResult(created.id);
+    }
+    return {
+      jobId: created.id,
+      state: finalJob.state,
+      result,
+    };
+  });
+
+  ipcMain.handle('demo:warmup-embed-model', async () => {
+    const models = await sdk.getModelDebugInfo();
+    const embedText = await sdk.warmupEmbedTextModel();
+    const modelsAfter = await sdk.getModelDebugInfo();
+    return { embedText, modelsBefore: models, modelsAfter };
+  });
+
+  ipcMain.handle('demo:get-model-debug', async () => {
+    return sdk.getModelDebugInfo();
+  });
+
+  ipcMain.handle('demo:create-embedding-job', async () => {
+    const created = await sdk.createJob({
+      taskType: 'embed_text',
+      payload: { text: 'This is a demo note for local embedding generation.' },
+      executionPolicy: 'local_only',
+      localMode: 'interactive',
+    });
+    const finalJob = await sdk.waitForJobCompletion(created.id, {
+      pollIntervalMs: 300,
+      timeoutMs: 360_000,
     });
     let result: Awaited<ReturnType<typeof sdk.getJobResult>> | null = null;
     if (finalJob.state === 'completed') {

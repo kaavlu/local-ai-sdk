@@ -1,6 +1,7 @@
 /**
  * Deletes the agent local data directory (SQLite DB, etc.).
- * Matches `LOCAL_AGENT_DATA_DIR` / default `.local-agent-data` in `src/db/paths.ts`.
+ * Matches `DYNO_AGENT_DATA_DIR` / `LOCAL_AGENT_DATA_DIR` / default `.dyno-agent-data`
+ * (with `.local-agent-data` fallback) in `src/db/paths.ts`.
  *
  * Stop the agent (Ctrl+C) before running, or removal may fail if files are locked.
  */
@@ -12,12 +13,32 @@ import process from 'node:process';
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PACKAGE_ROOT = path.resolve(SCRIPT_DIR, '..');
 
+const DEFAULT_DATA_DIR = '.dyno-agent-data';
+const LEGACY_DATA_DIR = '.local-agent-data';
+
 function getAgentDataDir() {
-  const override = process.env.LOCAL_AGENT_DATA_DIR?.trim();
+  const override =
+    process.env.DYNO_AGENT_DATA_DIR?.trim() || process.env.LOCAL_AGENT_DATA_DIR?.trim();
   if (override) {
     return path.resolve(override);
   }
-  return path.join(PACKAGE_ROOT, '.local-agent-data');
+  const dynoPath = path.join(PACKAGE_ROOT, DEFAULT_DATA_DIR);
+  const legacyPath = path.join(PACKAGE_ROOT, LEGACY_DATA_DIR);
+  let dynoExists = false;
+  let legacyExists = false;
+  try {
+    dynoExists = fs.existsSync(dynoPath);
+    legacyExists = fs.existsSync(legacyPath);
+  } catch {
+    // absent
+  }
+  if (dynoExists) {
+    return dynoPath;
+  }
+  if (legacyExists) {
+    return legacyPath;
+  }
+  return dynoPath;
 }
 
 function main() {

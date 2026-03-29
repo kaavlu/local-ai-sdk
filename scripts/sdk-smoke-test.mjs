@@ -1,8 +1,8 @@
 /**
  * Quick SDK smoke test against a running agent (read-only GETs).
- * Requires: npm run build -w @local-ai/sdk-ts
+ * Requires: npm run build -w @dyno/sdk-ts
  *
- * LOCAL_AGENT_URL=http://127.0.0.1:9000  — full base URL
+ * DYNO_AGENT_URL=http://127.0.0.1:9000 — full base URL (legacy LOCAL_AGENT_URL still honored)
  * PORT=9000 — shorthand for http://127.0.0.1:$PORT
  * SMOKE_SKIP_MACHINE_STATE=1 — skip getMachineState()
  */
@@ -14,7 +14,8 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SDK_ENTRY = path.join(ROOT, 'packages', 'sdk-ts', 'dist', 'index.js');
 
 function resolveBaseUrl() {
-  const explicit = process.env.LOCAL_AGENT_URL?.trim();
+  const explicit =
+    process.env.DYNO_AGENT_URL?.trim() || process.env.LOCAL_AGENT_URL?.trim();
   if (explicit) {
     return explicit.replace(/\/+$/, '');
   }
@@ -27,13 +28,13 @@ function resolveBaseUrl() {
 
 async function main() {
   if (!fs.existsSync(SDK_ENTRY)) {
-    console.error('[smoke] SDK not built at packages/sdk-ts/dist/. Run: npm run build -w @local-ai/sdk-ts');
+    console.error('[smoke] SDK not built at packages/sdk-ts/dist/. Run: npm run build -w @dyno/sdk-ts');
     process.exit(1);
   }
 
   const baseUrl = resolveBaseUrl();
-  const { LocalAiSdk } = await import(pathToFileURL(SDK_ENTRY).href);
-  const sdk = new LocalAiSdk({ baseUrl });
+  const { DynoSdk } = await import(pathToFileURL(SDK_ENTRY).href);
+  const sdk = new DynoSdk({ baseUrl });
 
   console.log('[smoke] baseUrl=' + baseUrl);
 
@@ -60,7 +61,7 @@ function printHintIfUnreachable(err) {
       '[smoke] hint: nothing responded at the base URL. Start the agent in another terminal: npm run dev:agent',
     );
     console.error(
-      '[smoke] hint: if the agent uses another port, set PORT or LOCAL_AGENT_URL (see README Developer workflow).',
+      '[smoke] hint: if the agent uses another port, set PORT or DYNO_AGENT_URL (see README Developer workflow).',
     );
   }
 }

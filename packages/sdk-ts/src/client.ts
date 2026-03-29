@@ -1,28 +1,33 @@
 import type {
+  CancelJobResponse,
   CreateJobRequest,
   CreateJobResponse,
   DatabaseDebugInfo,
+  DebugMetricsResponse,
   DeviceProfileRecord,
+  EmbedTextModelDebugRow,
   HealthResponse,
   JobRecord,
   JobResultRecord,
-  LocalAiSdkOptions,
+  DynoSdkOptions,
   MachineStateDebugRecord,
   MachineStateInput,
+  ModelDebugInfo,
   WaitForJobCompletionOptions,
+  WorkerDebugInfo,
 } from './types.js';
 
 const DEFAULT_BASE_URL = 'http://127.0.0.1:8787';
 
 /** Thrown when the agent returns a non-2xx HTTP status. */
-export class LocalAiSdkError extends Error {
+export class DynoSdkError extends Error {
   constructor(
     message: string,
     public readonly statusCode: number,
     public readonly responseBody: string,
   ) {
     super(message);
-    this.name = 'LocalAiSdkError';
+    this.name = 'DynoSdkError';
     Object.setPrototypeOf(this, new.target.prototype);
   }
 }
@@ -31,10 +36,10 @@ function normalizeBaseUrl(raw: string): string {
   return raw.replace(/\/+$/, '');
 }
 
-export class LocalAiSdk {
+export class DynoSdk {
   private readonly baseUrl: string;
 
-  constructor(options?: LocalAiSdkOptions) {
+  constructor(options?: DynoSdkOptions) {
     this.baseUrl = normalizeBaseUrl(options?.baseUrl ?? DEFAULT_BASE_URL);
   }
 
@@ -57,6 +62,26 @@ export class LocalAiSdk {
     );
   }
 
+  /** POST /jobs/:id/cancel — throws {@link DynoSdkError} with 409 if the job is running. */
+  async cancelJob(jobId: string): Promise<CancelJobResponse> {
+    return this.requestJson<CancelJobResponse>(
+      'POST',
+      `/jobs/${encodeURIComponent(jobId)}/cancel`,
+    );
+  }
+
+  async pauseWorker(): Promise<{ ok: boolean; isPaused: boolean }> {
+    return this.requestJson<{ ok: boolean; isPaused: boolean }>('POST', '/worker/pause');
+  }
+
+  async resumeWorker(): Promise<{ ok: boolean; isPaused: boolean }> {
+    return this.requestJson<{ ok: boolean; isPaused: boolean }>('POST', '/worker/resume');
+  }
+
+  async getWorkerDebugInfo(): Promise<WorkerDebugInfo> {
+    return this.requestJson<WorkerDebugInfo>('GET', '/debug/worker');
+  }
+
   async reportMachineState(input: MachineStateInput): Promise<{ ok: boolean; updatedAt: number }> {
     return this.requestJson<{ ok: boolean; updatedAt: number }>(
       'POST',
@@ -75,6 +100,28 @@ export class LocalAiSdk {
 
   async getDbDebugInfo(): Promise<DatabaseDebugInfo> {
     return this.requestJson<DatabaseDebugInfo>('GET', '/debug/db');
+  }
+
+  /** `GET /debug/metrics` — job aggregates, timing averages, retries, worker/model snapshot (Step 14). */
+  async getDebugMetrics(): Promise<DebugMetricsResponse> {
+    return this.requestJson<DebugMetricsResponse>('GET', '/debug/metrics');
+  }
+
+  /** `GET /debug/models` — embed_text pipeline lifecycle (in-process). */
+  async getModelDebugInfo(): Promise<ModelDebugInfo> {
+    return this.requestJson<ModelDebugInfo>('GET', '/debug/models');
+  }
+
+  /**
+   * `POST /models/embed-text/warmup` — load the embed_text model ahead of jobs.
+   * Throws {@link DynoSdkError} with status 503 if warmup completes in a failed state.
+   */
+  async warmupEmbedTextModel(): Promise<EmbedTextModelDebugRow> {
+    const body = await this.requestJson<{ embed_text: EmbedTextModelDebugRow }>(
+      'POST',
+      '/models/embed-text/warmup',
+    );
+    return body.embed_text;
   }
 
   /**
@@ -96,7 +143,11 @@ export class LocalAiSdk {
       }
 
       const job = await this.getJob(jobId);
-      if (job.state === 'completed' || job.state === 'failed') {
+      if (
+        job.state === 'completed' ||
+        job.state === 'failed' ||
+        job.state === 'cancelled'
+      ) {
         return job;
       }
 
@@ -124,14 +175,14 @@ export class LocalAiSdk {
       });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      throw new Error(`Local agent request failed (${method} ${path}): ${msg}`);
+      throw new Error(`Dyno agent request failed (${method} ${path}): ${msg}`);
     }
 
     const text = await res.text();
 
     if (!res.ok) {
       const detail = text.length > 0 ? text : '(empty body)';
-      throw new LocalAiSdkError(
+      throw new DynoSdkError(
         `Agent returned ${res.status} for ${method} ${path}: ${detail}`,
         res.status,
         text,

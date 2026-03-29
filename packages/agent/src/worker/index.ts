@@ -1,20 +1,43 @@
 import type { Database } from 'sql.js';
 import { getCloudAvailable } from '../cloud-availability.js';
-import { failJob, listQueuedJobsOrdered, markJobRunning, type JobRecord } from '../jobs/index.js';
+import {
+  handleExecutionFailure,
+  listQueuedJobsOrdered,
+  tryMarkJobRunning,
+  MAX_JOB_ATTEMPTS,
+  type JobRecord,
+} from '../jobs/index.js';
 import { runMockJobPipeline, type MockExecutorTarget } from '../jobs/pipeline.js';
 import { resolveExecutionDecision, type ExecutionDecision } from '../policy/index.js';
 import { getLatestDeviceProfile } from '../profiler/index.js';
 import { getLatestMachineState } from '../machine-state/index.js';
-import { evaluateMachineReadiness } from './readiness.js';
+import { getEffectiveMachineReadiness } from './readiness.js';
+import { getIsWorkerPaused } from './state.js';
 
 /** Polling interval for queued jobs (ms). */
-const POLL_MS = 300;
+export const WORKER_POLL_INTERVAL_MS = 300;
 
 /** Throttle repeated "all queued jobs blocked" logs (ms). */
 const ALL_BLOCKED_LOG_THROTTLE_MS = 5000;
 
 let lastAllBlockedLogAt = 0;
 let lastAllBlockedCount: number | null = null;
+
+/** True between successful claim and pipeline `finally` (in-flight execution). */
+let jobInFlight = false;
+let currentRunningJobId: string | null = null;
+
+export function getWorkerRuntimeSnapshot(): {
+  jobInFlight: boolean;
+  currentRunningJobId: string | null;
+  pollIntervalMs: number;
+} {
+  return {
+    jobInFlight,
+    currentRunningJobId,
+    pollIntervalMs: WORKER_POLL_INTERVAL_MS,
+  };
+}
 
 function decisionToTarget(d: ExecutionDecision): MockExecutorTarget | null {
   if (d === 'run_local') {
@@ -42,6 +65,10 @@ export function startWorker(db: Database, dbPath: string): () => void {
       return;
     }
 
+    if (getIsWorkerPaused(db)) {
+      return;
+    }
+
     const queued = listQueuedJobsOrdered(db);
     if (queued.length === 0) {
       return;
@@ -49,7 +76,7 @@ export function startWorker(db: Database, dbPath: string): () => void {
 
     const machineState = getLatestMachineState(db);
     const profile = getLatestDeviceProfile(db);
-    const readiness = evaluateMachineReadiness(machineState, profile);
+    const readiness = getEffectiveMachineReadiness(machineState, profile);
     const cloudAvailable = getCloudAvailable();
 
     let picked: JobRecord | null = null;
@@ -108,42 +135,49 @@ export function startWorker(db: Database, dbPath: string): () => void {
       return;
     }
 
+    console.log('[agent] worker: picked job id=' + picked.id);
+
+    let attempt: number | null;
+    try {
+      attempt = tryMarkJobRunning(db, dbPath, picked.id);
+    } catch (err) {
+      console.error('[agent] worker: tryMarkJobRunning failed id=' + picked.id, err);
+      return;
+    }
+
+    if (attempt === null) {
+      console.log('[agent] worker: lost claim (job no longer queued) id=' + picked.id);
+      return;
+    }
+
     console.log(
-      '[agent] worker: selected job id=' +
-        picked.id +
-        ' executionPolicy=' +
-        picked.executionPolicy +
-        ' localMode=' +
-        picked.localMode +
-        ' decision=' +
-        decision,
+      '[agent] worker: attempt ' + attempt + '/' + MAX_JOB_ATTEMPTS + ' id=' + picked.id,
     );
 
     processing = true;
-
-    try {
-      markJobRunning(db, dbPath, picked.id);
-    } catch (err) {
-      processing = false;
-      console.error('[agent] worker: markJobRunning failed id=' + picked.id, err);
-      return;
-    }
+    jobInFlight = true;
+    currentRunningJobId = picked.id;
 
     void (async () => {
       try {
         await runMockJobPipeline(db, dbPath, picked!, target);
       } catch (err) {
-        console.error('[agent] worker: job failed id=' + picked!.id, err);
+        console.error('[agent] worker: unexpected pipeline error id=' + picked!.id, err);
         try {
-          failJob(db, dbPath, picked!.id);
+          handleExecutionFailure(db, dbPath, picked!.id, err);
         } catch (persistErr) {
-          console.error('[agent] worker: failJob persist error id=' + picked!.id, persistErr);
+          console.error(
+            '[agent] worker: failure handler persist error id=' + picked!.id,
+            persistErr,
+          );
         }
       } finally {
         processing = false;
+        jobInFlight = false;
+        currentRunningJobId = null;
       }
     })();
-  }, POLL_MS);
+  }, WORKER_POLL_INTERVAL_MS);
 
   return () => {
     stopped = true;

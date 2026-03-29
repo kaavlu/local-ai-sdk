@@ -3,7 +3,7 @@ import type { Database, SqlValue } from 'sql.js';
 export interface DatabaseDebugInfo {
   path: string;
   tables: string[];
-  counts: { jobs: number; results: number };
+  counts: { jobs: number; results: number; runningJobs: number };
   schema_version: string | null;
   device_profile_row: boolean;
   machine_state_row: boolean;
@@ -36,6 +36,10 @@ export function getDatabaseDebugInfo(db: Database, dbPath: string): DatabaseDebu
 
   const jobs = firstScalarNumber(db, 'SELECT COUNT(*) FROM jobs');
   const results = firstScalarNumber(db, 'SELECT COUNT(*) FROM results');
+  const runningJobs = firstScalarNumber(
+    db,
+    `SELECT COUNT(*) FROM jobs WHERE state = 'running'`,
+  );
 
   const versionRes = db.exec(
     `SELECT value FROM agent_state WHERE key = 'schema_version'`,
@@ -52,7 +56,7 @@ export function getDatabaseDebugInfo(db: Database, dbPath: string): DatabaseDebu
   return {
     path: dbPath,
     tables,
-    counts: { jobs, results },
+    counts: { jobs, results, runningJobs },
     schema_version,
     device_profile_row,
     machine_state_row,

@@ -1,7 +1,7 @@
 {
-  "name": "@local-ai/sdk-ts",
+  "name": "@dyno/sdk-ts",
   "version": "0.0.1",
-  "description": "Thin TypeScript client for the local AI agent HTTP API",
+  "description": "Thin TypeScript client for the Dyno agent HTTP API",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {

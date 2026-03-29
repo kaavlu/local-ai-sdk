@@ -2,12 +2,14 @@ import http from 'node:http';
 import type { IncomingMessage } from 'node:http';
 import { getAgentDataDir, getDatabaseDebugInfo, initDatabase } from './db/index.js';
 import {
+  cancelJob,
   createJob,
   getJobById,
   getJobResult,
   jobCreatedResponse,
   jobResultToJson,
   jobToJson,
+  recoverRunningJobsOnStartup,
   validateCreateJobRequest,
 } from './jobs/index.js';
 import { collectDeviceProfile, getLatestDeviceProfile, saveDeviceProfile } from './profiler/index.js';
@@ -18,8 +20,19 @@ import {
   saveMachineState,
   validateMachineStatePostBody,
 } from './machine-state/index.js';
-import { startWorker } from './worker/index.js';
-import { evaluateMachineReadiness, readinessToDebugJson } from './worker/readiness.js';
+import { getWorkerRuntimeSnapshot, startWorker } from './worker/index.js';
+import { getIsWorkerPaused, setWorkerPaused } from './worker/state.js';
+import {
+  getEmbedTextModelState,
+  getModelsDebugJson,
+  warmupEmbedTextModel,
+} from './models/embed-text-model.js';
+import {
+  getEffectiveMachineReadiness,
+  isReadinessBypassActive,
+  readinessToDebugJson,
+} from './worker/readiness.js';
+import { getDebugMetricsJson } from './metrics/index.js';
 
 const PORT = Number(process.env.PORT) || 8787;
 
@@ -57,6 +70,8 @@ function json(
 async function main(): Promise<void> {
   const { db, path: dbPath } = await initDatabase();
 
+  recoverRunningJobsOnStartup(db, dbPath);
+
   const metrics = collectDeviceProfile({ diskPath: getAgentDataDir() });
   const profile = saveDeviceProfile(db, dbPath, metrics);
   console.log(
@@ -74,6 +89,12 @@ async function main(): Promise<void> {
       profile.disk_free_mb,
   );
 
+  if (isReadinessBypassActive()) {
+    console.warn(
+      '[agent] readiness bypass active: scheduling treats all local modes as ready (dev/testing only)',
+    );
+  }
+
   const stopWorker = startWorker(db, dbPath);
 
   console.log('[agent] phase=http: creating HTTP server');
@@ -88,6 +109,13 @@ async function main(): Promise<void> {
 
     if (req.method === 'GET' && pathname === '/debug/db') {
       const body = getDatabaseDebugInfo(db, dbPath);
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify(body));
+      return;
+    }
+
+    if (req.method === 'GET' && pathname === '/debug/metrics') {
+      const body = getDebugMetricsJson(db);
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
       res.end(JSON.stringify(body));
       return;
@@ -112,12 +140,67 @@ async function main(): Promise<void> {
       return;
     }
 
+    if (req.method === 'GET' && pathname === '/debug/models') {
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify(getModelsDebugJson()));
+      return;
+    }
+
+    if (req.method === 'GET' && pathname === '/debug/worker') {
+      const paused = getIsWorkerPaused(db);
+      const rt = getWorkerRuntimeSnapshot();
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(
+        JSON.stringify({
+          isPaused: paused,
+          jobInFlight: rt.jobInFlight,
+          currentRunningJobId: rt.currentRunningJobId,
+          pollIntervalMs: rt.pollIntervalMs,
+        }),
+      );
+      return;
+    }
+
     if (req.method === 'GET' && pathname === '/debug/readiness') {
       const ms = getLatestMachineState(db);
       const prof = getLatestDeviceProfile(db);
-      const readiness = evaluateMachineReadiness(ms, prof);
+      const readiness = getEffectiveMachineReadiness(ms, prof);
+      const embedModel = getEmbedTextModelState();
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-      res.end(JSON.stringify(readinessToDebugJson(readiness)));
+      res.end(
+        JSON.stringify({
+          ...readinessToDebugJson(readiness),
+          readinessBypass: isReadinessBypassActive(),
+          embedTextModel: {
+            state: embedModel.state,
+            loadedAt: embedModel.loadedAt,
+            lastError: embedModel.lastError,
+          },
+        }),
+      );
+      return;
+    }
+
+    if (req.method === 'POST' && pathname === '/models/embed-text/warmup') {
+      void (async () => {
+        try {
+          await warmupEmbedTextModel();
+          const st = getEmbedTextModelState();
+          if (st.state === 'failed') {
+            json(res, 503, {
+              error: 'warmup_failed',
+              message: st.lastError ?? 'embed_text model failed to load',
+              embed_text: st,
+            });
+            return;
+          }
+          json(res, 200, { embed_text: st });
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          console.error('[agent] embed_text_model: warmup endpoint failed:', e);
+          json(res, 500, { error: 'internal_error', message: msg });
+        }
+      })();
       return;
     }
 
@@ -146,16 +229,62 @@ async function main(): Promise<void> {
       return;
     }
 
+    if (req.method === 'POST' && pathname === '/worker/pause') {
+      setWorkerPaused(db, dbPath, true);
+      json(res, 200, { ok: true, isPaused: true });
+      return;
+    }
+
+    if (req.method === 'POST' && pathname === '/worker/resume') {
+      setWorkerPaused(db, dbPath, false);
+      json(res, 200, { ok: true, isPaused: false });
+      return;
+    }
+
     const resultPath = /^\/jobs\/([^/]+)\/result$/.exec(pathname);
     if (req.method === 'GET' && resultPath) {
       const jobId = resultPath[1];
+      const jobForResult = getJobById(db, jobId);
+      if (!jobForResult) {
+        json(res, 404, { error: 'job_not_found', id: jobId });
+        return;
+      }
+      if (jobForResult.state === 'cancelled') {
+        json(res, 409, {
+          error: 'job_cancelled',
+          message: 'Job was cancelled; no result is available.',
+          id: jobId,
+          state: 'cancelled',
+        });
+        return;
+      }
       const row = getJobResult(db, jobId);
       if (!row) {
         console.log('[agent] job: result not found id=' + jobId);
         json(res, 404, { error: 'result_not_found' });
         return;
       }
-      console.log('[agent] job: result fetched id=' + jobId);
+      const out = row.output;
+      if (
+        out !== null &&
+        typeof out === 'object' &&
+        !Array.isArray(out) &&
+        (out as Record<string, unknown>).taskType === 'embed_text'
+      ) {
+        const o = out as Record<string, unknown>;
+        console.log(
+          '[agent] job: result fetched id=' +
+            jobId +
+            ' embed_text dimensions=' +
+            String(o.dimensions) +
+            ' executor=' +
+            row.executor +
+            ' preview=' +
+            JSON.stringify(o.embeddingPreview),
+        );
+      } else {
+        console.log('[agent] job: result fetched id=' + jobId);
+      }
       json(res, 200, jobResultToJson(row));
       return;
     }
@@ -170,6 +299,32 @@ async function main(): Promise<void> {
       }
       console.log('[agent] job: fetched id=' + jobId);
       json(res, 200, jobToJson(job));
+      return;
+    }
+
+    const cancelPath = /^\/jobs\/([^/]+)\/cancel$/.exec(pathname);
+    if (req.method === 'POST' && cancelPath) {
+      const jobId = cancelPath[1];
+      const outcome = cancelJob(db, dbPath, jobId);
+      if (!outcome) {
+        json(res, 404, { error: 'job_not_found', id: jobId });
+        return;
+      }
+      if (!outcome.ok) {
+        json(res, 409, {
+          error: 'running_job_cancel_not_supported',
+          message: 'Cancellation of running jobs is not supported yet.',
+          id: jobId,
+          state: outcome.job.state,
+        });
+        return;
+      }
+      json(res, 200, {
+        ok: true,
+        id: outcome.job.id,
+        state: outcome.job.state,
+        outcome: outcome.outcome === 'cancelled' ? 'cancelled' : 'already_terminal',
+      });
       return;
     }
 

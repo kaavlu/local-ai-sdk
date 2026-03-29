@@ -1,17 +1,25 @@
-export { LocalAiSdk, LocalAiSdkError } from './client.js';
+export { DynoSdk, DynoSdkError } from './client.js';
 export type {
+  CancelJobResponse,
   CreateJobRequest,
   CreateJobResponse,
   DatabaseDebugInfo,
+  DebugMetricsResponse,
   DeviceProfileRecord,
+  EmbedTextModelDebugRow,
+  EmbedTextModelState,
+  EmbedTextPayload,
   ExecutionPolicy,
   HealthResponse,
   JobRecord,
   JobResultRecord,
   JobState,
-  LocalAiSdkOptions,
+  DynoSdkOptions,
   LocalMode,
   MachineStateDebugRecord,
   MachineStateInput,
+  MetricsJobStatusCounts,
+  ModelDebugInfo,
   WaitForJobCompletionOptions,
+  WorkerDebugInfo,
 } from './types.js';
