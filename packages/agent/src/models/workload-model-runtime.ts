@@ -18,8 +18,23 @@ import {
   unloadEmbedTextModel,
 } from './embed-text-model.js';
 
-/** How long a ready model may sit unused before opportunistic eviction (ms). */
-export const WORKLOAD_MODEL_IDLE_EVICT_AFTER_MS = 15 * 60 * 1000;
+function readPositiveIntEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw === '') {
+    return fallback;
+  }
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? Math.trunc(n) : fallback;
+}
+
+/**
+ * How long a ready model may sit unused before opportunistic eviction (ms).
+ * Override locally for verification: `DYNO_WORKLOAD_IDLE_EVICT_MS` (positive integer ms).
+ */
+export const WORKLOAD_MODEL_IDLE_EVICT_AFTER_MS = readPositiveIntEnv(
+  'DYNO_WORKLOAD_IDLE_EVICT_MS',
+  15 * 60 * 1000,
+);
 
 /**
  * Cap on simultaneously resident real workload models. When an upcoming workload needs a load
@@ -28,12 +43,18 @@ export const WORKLOAD_MODEL_IDLE_EVICT_AFTER_MS = 15 * 60 * 1000;
  */
 export const MAX_RESIDENT_WORKLOAD_MODELS = 2;
 
-/** Default wall-clock budget for one local real workload attempt (load + inference). */
-export const DEFAULT_LOCAL_WORKLOAD_EXECUTION_TIMEOUT_MS = 300_000;
+/**
+ * Default wall-clock budget for one local real workload attempt (load + inference).
+ * Override locally for verification: `DYNO_WORKLOAD_EXEC_TIMEOUT_MS` (applies to both workloads).
+ */
+export const DEFAULT_LOCAL_WORKLOAD_EXECUTION_TIMEOUT_MS = readPositiveIntEnv(
+  'DYNO_WORKLOAD_EXEC_TIMEOUT_MS',
+  300_000,
+);
 
 const PER_WORKLOAD_EXECUTION_TIMEOUT_MS: Partial<Record<string, number>> = {
-  embed_text: 300_000,
-  classify_text: 300_000,
+  embed_text: DEFAULT_LOCAL_WORKLOAD_EXECUTION_TIMEOUT_MS,
+  classify_text: DEFAULT_LOCAL_WORKLOAD_EXECUTION_TIMEOUT_MS,
 };
 
 const REAL_TASK_ORDER = ['embed_text', 'classify_text'] as const;
@@ -112,6 +133,17 @@ function canEvictTaskType(taskType: RealTaskType, now: number): boolean {
     return false;
   }
   return now - s.lastUsedAt >= WORKLOAD_MODEL_IDLE_EVICT_AFTER_MS;
+}
+
+/**
+ * Whether the workload would be evicted by idle rules at `now` (same logic as eviction call sites).
+ * Used by focused verification; not part of the public HTTP API.
+ */
+export function isWorkloadModelIdleEvictionEligible(taskType: string, now: number): boolean {
+  if (!isRealTaskType(taskType)) {
+    return false;
+  }
+  return canEvictTaskType(taskType, now);
 }
 
 /**
