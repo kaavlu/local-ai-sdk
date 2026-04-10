@@ -38,9 +38,12 @@ function normalizeBaseUrl(raw: string): string {
 
 export class DynoSdk {
   private readonly baseUrl: string;
+  private readonly projectId?: string;
 
   constructor(options?: DynoSdkOptions) {
     this.baseUrl = normalizeBaseUrl(options?.baseUrl ?? DEFAULT_BASE_URL);
+    const normalizedProjectId = options?.projectId?.trim();
+    this.projectId = normalizedProjectId ? normalizedProjectId : undefined;
   }
 
   async healthCheck(): Promise<HealthResponse> {
@@ -174,6 +177,9 @@ export class DynoSdk {
   ): Promise<T> {
     const url = `${this.baseUrl}${path}`;
     const headers: Record<string, string> = {};
+    if (this.projectId) {
+      headers['X-Project-Id'] = this.projectId;
+    }
     if (body !== undefined) {
       headers['Content-Type'] = 'application/json; charset=utf-8';
     }

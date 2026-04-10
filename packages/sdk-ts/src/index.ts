@@ -1,4 +1,18 @@
 export { DynoSdk, DynoSdkError } from './client.js';
+export {
+  createDemoProjectSdkContext,
+  deriveSchedulingFromDemoProject,
+} from './demo-project-sdk.js';
+export { HttpDemoConfigProvider } from './demo-http-config-provider.js';
+export { SupabaseDemoConfigProvider } from './demo-supabase-config-provider.js';
+export type {
+  ConfigProvider,
+  DemoProjectConfig,
+  DemoProjectSdkContext,
+  DemoProjectSdkOptions,
+  DemoProjectUseCaseType,
+  DemoStrategyPreset,
+} from './config-provider.js';
 export type {
   CancelJobResponse,
   ClassifyTextPayload,

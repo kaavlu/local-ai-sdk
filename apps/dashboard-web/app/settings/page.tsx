@@ -1,11 +1,120 @@
 import { redirect } from 'next/navigation'
+import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import { DashboardLayout } from '@/components/dashboard/dashboard-layout'
 import { PageHeader } from '@/components/dashboard/page-header'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Copy, Plus, Trash2 } from 'lucide-react'
+import { getCurrentProfile, getCurrentWorkspace, updateProfile, updateWorkspace } from '@/lib/data/dashboard-data'
+import type { Profile, Workspace } from '@/lib/data/dashboard-types'
+import { SettingsForm } from '@/app/settings/_components/settings-form'
+
+export type WorkspaceActionState = {
+  status: 'idle' | 'success' | 'error'
+  message?: string
+  values?: {
+    name: string
+  }
+}
+
+export type ProfileActionState = {
+  status: 'idle' | 'success' | 'error'
+  message?: string
+  values?: {
+    fullName: string
+    useType: string
+  }
+}
+
+const initialWorkspaceActionState: WorkspaceActionState = {
+  status: 'idle',
+}
+
+const initialProfileActionState: ProfileActionState = {
+  status: 'idle',
+}
+
+async function saveWorkspaceAction(
+  _previousState: WorkspaceActionState,
+  formData: FormData,
+): Promise<WorkspaceActionState> {
+  'use server'
+
+  const workspaceId = String(formData.get('workspaceId') ?? '').trim()
+  const name = String(formData.get('workspaceName') ?? '').trim()
+
+  if (!workspaceId) {
+    return {
+      status: 'error',
+      message: 'Workspace is unavailable.',
+      values: { name },
+    }
+  }
+
+  if (!name) {
+    return {
+      status: 'error',
+      message: 'Workspace name is required.',
+      values: { name },
+    }
+  }
+
+  try {
+    const workspace = await updateWorkspace(workspaceId, { name })
+    revalidatePath('/settings')
+
+    return {
+      status: 'success',
+      message: 'Workspace saved.',
+      values: { name: workspace.name },
+    }
+  } catch (error) {
+    return {
+      status: 'error',
+      message: error instanceof Error ? error.message : 'Failed to save workspace.',
+      values: { name },
+    }
+  }
+}
+
+async function saveProfileAction(
+  _previousState: ProfileActionState,
+  formData: FormData,
+): Promise<ProfileActionState> {
+  'use server'
+
+  const fullName = String(formData.get('fullName') ?? '').trim()
+  const useType = String(formData.get('useType') ?? '').trim()
+
+  if (!useType) {
+    return {
+      status: 'error',
+      message: 'Use type is required.',
+      values: { fullName, useType },
+    }
+  }
+
+  try {
+    const profile = await updateProfile({
+      full_name: fullName.length > 0 ? fullName : null,
+      use_type: useType,
+    })
+    revalidatePath('/settings')
+
+    return {
+      status: 'success',
+      message: 'Profile saved.',
+      values: {
+        fullName: profile.full_name ?? '',
+        useType: profile.use_type ?? '',
+      },
+    }
+  } catch (error) {
+    return {
+      status: 'error',
+      message: error instanceof Error ? error.message : 'Failed to save profile.',
+      values: { fullName, useType },
+    }
+  }
+}
 
 export default async function SettingsPage() {
   const supabase = await createClient()
@@ -15,116 +124,31 @@ export default async function SettingsPage() {
     redirect('/signin')
   }
 
+  const [profile, workspace] = await Promise.all([getCurrentProfile(), getCurrentWorkspace()])
+
+  const initialProfile: Profile = profile ?? {
+    id: user.id,
+    full_name: null,
+    use_type: null,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  }
+
+  const initialWorkspace: Workspace | null = workspace ?? null
+
   return (
     <DashboardLayout userEmail={user.email}>
-      <PageHeader title="Settings" description="Manage workspace, profile, and security settings." />
-      
-      <div className="max-w-3xl space-y-6 animate-fade-in-up">
-        {/* Workspace Section */}
-        <div className="bg-card border border-border/40 rounded-lg p-5">
-          <div className="mb-4">
-            <h2 className="text-[13px] font-semibold text-foreground">Workspace</h2>
-            <p className="text-[11px] text-muted-foreground/60 mt-0.5">Configure workspace settings and details</p>
-          </div>
-          
-          <div className="space-y-4">
-            <div className="space-y-1.5">
-              <Label htmlFor="workspace" className="text-[11px] font-medium text-muted-foreground">
-                Workspace Name
-              </Label>
-              <Input
-                id="workspace"
-                type="text"
-                defaultValue="Dyno Labs"
-                className="h-[32px] text-[12px] bg-muted/30 border-border/40 focus:border-ring/60 focus:ring-ring/15"
-              />
-            </div>
-            
-            <div className="flex justify-end">
-              <Button
-                disabled
-                className="h-[32px] text-[11px] font-medium bg-primary/30 text-primary/50 cursor-not-allowed rounded-sm"
-              >
-                Save Changes
-              </Button>
-            </div>
-          </div>
-        </div>
+      <PageHeader title="Settings" description="Manage workspace and profile settings." />
 
-        {/* Profile Section */}
-        <div className="bg-card border border-border/40 rounded-lg p-5">
-          <div className="mb-4">
-            <h2 className="text-[13px] font-semibold text-foreground">Profile</h2>
-            <p className="text-[11px] text-muted-foreground/60 mt-0.5">Manage your personal account information</p>
-          </div>
-          
-          <div className="space-y-4">
-            <div className="flex items-center gap-4">
-              <div className="w-10 h-10 rounded-lg bg-primary/15 flex items-center justify-center text-[10px] font-semibold text-primary flex-shrink-0">
-                {user.email?.charAt(0).toUpperCase()}
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-[11px] font-medium text-muted-foreground">Email Address</p>
-                <p className="text-[12px] text-foreground font-medium truncate">{user.email}</p>
-              </div>
-            </div>
-            
-            <div className="pt-2 border-t border-border/30">
-              <p className="text-[11px] font-medium text-muted-foreground mb-2">Account Created</p>
-              <p className="text-[12px] text-foreground">
-                {user.created_at ? new Date(user.created_at).toLocaleDateString() : 'N/A'}
-              </p>
-            </div>
-          </div>
-        </div>
-
-        {/* API Keys Section */}
-        <div className="bg-card border border-border/40 rounded-lg p-5">
-          <div className="mb-4 flex items-center justify-between">
-            <div>
-              <h2 className="text-[13px] font-semibold text-foreground">API Keys</h2>
-              <p className="text-[11px] text-muted-foreground/60 mt-0.5">Manage API keys for programmatic access</p>
-            </div>
-            <Button
-              disabled
-              className="h-[32px] text-[11px] font-medium bg-primary/30 text-primary/50 cursor-not-allowed rounded-sm gap-1.5"
-            >
-              <Plus className="w-3 h-3" />
-              Create Key
-            </Button>
-          </div>
-          
-          <div className="bg-muted/20 border border-border/30 rounded-sm p-4">
-            <p className="text-[12px] text-muted-foreground/60 text-center py-3">
-              No API keys yet. Create one to get started.
-            </p>
-          </div>
-        </div>
-
-        {/* Danger Zone Section */}
-        <div className="bg-card border border-destructive/10 rounded-lg p-5">
-          <div className="mb-4">
-            <h2 className="text-[13px] font-semibold text-destructive">Danger Zone</h2>
-            <p className="text-[11px] text-muted-foreground/60 mt-0.5">Irreversible actions</p>
-          </div>
-          
-          <div className="space-y-3 pt-2 border-t border-border/30">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-[12px] font-medium text-foreground">Delete Workspace</p>
-                <p className="text-[11px] text-muted-foreground/60 mt-0.5">Permanently delete this workspace and all data</p>
-              </div>
-              <Button
-                disabled
-                className="h-[32px] text-[11px] font-medium bg-destructive/20 text-destructive/50 border border-destructive/20 hover:bg-destructive/25 cursor-not-allowed rounded-sm gap-1.5"
-              >
-                <Trash2 className="w-3 h-3" />
-                Delete
-              </Button>
-            </div>
-          </div>
-        </div>
-      </div>
+      <SettingsForm
+        email={user.email ?? ''}
+        initialWorkspace={initialWorkspace}
+        initialProfile={initialProfile}
+        saveWorkspaceAction={saveWorkspaceAction}
+        saveProfileAction={saveProfileAction}
+        initialWorkspaceActionState={initialWorkspaceActionState}
+        initialProfileActionState={initialProfileActionState}
+      />
     </DashboardLayout>
   )
 }

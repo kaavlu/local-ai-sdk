@@ -5,6 +5,11 @@ export interface DynoSdkOptions {
    * @default "http://127.0.0.1:8787"
    */
   baseUrl?: string;
+  /**
+   * Optional project identifier forwarded with SDK requests.
+   * This is a lightweight context hint for future project-scoped routing.
+   */
+  projectId?: string;
 }
 
 /** Where a job may or prefers to run (Step 9). */

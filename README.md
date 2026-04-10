@@ -259,17 +259,88 @@ If the client sends **`executionPolicy`** and **`localMode`**, those win; the le
 
 ## Run the Electron demo (dev)
 
-1. Start the agent in one terminal: `npm run dev:agent`
-2. Build the SDK at least once: `npm run build -w @dyno/sdk-ts`
-3. Start the app:
+The Electron app is now a compact in-memory semantic-search demo (setup + indexing + search) with two backend modes:
+- Gemini Cloud (`gemini-embedding-001`)
+- Dyno (`projectId` + dashboard strategy path)
+
+### Backend switch (demo-friendly)
+
+Open `apps/demo-electron/src/main.ts` and edit the clearly labeled block:
+
+```ts
+// DEMO SWITCH: choose one embedding backend, then reload the app.
+const embeddingBackend = createGeminiBackend();
+// const embeddingBackend = createDynoBackend();
+```
+
+Flip one line, reload the app, and the same semantic-search workflow runs through the selected backend.
+
+### Gemini Cloud mode
+
+Required env:
+
+```powershell
+$env:GEMINI_API_KEY="<your_gemini_api_key>"
+```
+
+Run:
 
 ```bash
+npm run build -w @dyno/sdk-ts
+npm run dev:app
+```
+
+### Dyno mode
+
+Required env:
+
+```powershell
+$env:DYNO_PROJECT_ID="<dashboard_project_id>"
+$env:DYNO_CONFIG_RESOLVER_URL="http://127.0.0.1:3000"
+$env:DYNO_CONFIG_RESOLVER_SECRET="<same_secret_as_dashboard_server>"
+```
+
+Optional:
+
+```powershell
+$env:DYNO_AGENT_URL="http://127.0.0.1:8787"
+```
+
+Run:
+
+```bash
+npm run dev:agent
+npm run build -w @dyno/sdk-ts
 npm run dev:app
 ```
 
 After editing TypeScript, run `npm run dev:app` again (it runs `tsc` then `electron .`).
 
-With the agent running, use **Create Demo Job** for a minimal echo (`policy: "local"`), **Warm Up Embedding Model** to preload the embed pipeline (Step 11), or **Create Embedding Job** for `embed_text` with `local_only` + `interactive`. Jobs may stay **queued** until interactive local readiness passes (see Step 9 and `GET /debug/readiness`). **Create Embedding Job** waits up to **6 minutes** for the first run (model download + load) if you skip warmup.
+In both modes, the UI shows active backend/status, supports built-in sample datasets or pasted custom text, indexes chunks in memory, and returns top cosine-similarity matches with scores.
+
+### Dashboard resolver env (server-only)
+
+The dashboard now exposes a thin demo resolver at
+`/api/demo/project-config/[projectId]`. This endpoint is a temporary bridge
+for demo integration and should run with server-only secrets.
+
+Required server env in `apps/dashboard-web`:
+
+```powershell
+$env:DYNO_DEMO_CONFIG_RESOLVER_SECRET="<resolver_secret>"
+$env:SUPABASE_SERVICE_ROLE_KEY="<supabase_service_role_key>"
+```
+
+Notes:
+- `DYNO_CONFIG_RESOLVER_SECRET` in `demo-electron` must match `DYNO_DEMO_CONFIG_RESOLVER_SECRET` in `dashboard-web`.
+- `SUPABASE_SERVICE_ROLE_KEY` is internal to the dashboard backend and is never needed in the SDK or demo app.
+- This resolver route is demo-only and intended to be replaced later by a proper control-plane API.
+
+When **Create Embedding Job** is clicked in Dyno mode, logs and UI output include:
+- `projectId` used
+- resolver-loaded project config (`use_case_type`, `strategy_preset`, model/policy fields)
+- derived execution path (`executionPolicy`, `localMode`)
+- embedding result summary (`executor`, dimensions, preview)
 
 ## Scripts (root)
 

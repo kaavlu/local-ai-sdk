@@ -1,28 +1,31 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { EmbedTextModelDebugRow, ModelDebugInfo } from '@dyno/sdk-ts';
+import type {
+  DemoProjectConfig,
+} from '@dyno/sdk-ts';
 
-export type DemoJobOutcome = {
-  jobId: string;
-  state: string;
-  result: {
-    jobId: string;
-    output: unknown;
-    executor: string;
-    completedAt: number;
-  } | null;
+type EmbedPurpose = 'index' | 'search';
+
+export type BackendStatus = {
+  backendId: 'gemini_cloud' | 'dyno';
+  backendLabel: string;
+  statusLine: string;
+  details: string[];
+  model?: string;
+  executionPolicy?: string;
+  localMode?: string;
+  projectConfig?: Pick<DemoProjectConfig, 'projectId' | 'use_case_type' | 'strategy_preset'>;
 };
 
-export type EmbedWarmupDemoResult = {
-  embedText: EmbedTextModelDebugRow;
-  modelsBefore: ModelDebugInfo;
-  modelsAfter: ModelDebugInfo;
+export type EmbedTextsResponse = {
+  count: number;
+  dimensions: number;
+  vectors: number[][];
 };
 
 contextBridge.exposeInMainWorld('demoAgent', {
-  createDemoJob: (): Promise<DemoJobOutcome> => ipcRenderer.invoke('demo:create-demo-job'),
-  createEmbeddingJob: (): Promise<DemoJobOutcome> =>
-    ipcRenderer.invoke('demo:create-embedding-job'),
-  warmupEmbedModel: (): Promise<EmbedWarmupDemoResult> =>
-    ipcRenderer.invoke('demo:warmup-embed-model'),
-  getModelDebugInfo: (): Promise<ModelDebugInfo> => ipcRenderer.invoke('demo:get-model-debug'),
+  getBackendStatus: (): Promise<BackendStatus> => ipcRenderer.invoke('demo:get-backend-status'),
+  embedTexts: (payload: {
+    texts: string[];
+    purpose: EmbedPurpose;
+  }): Promise<EmbedTextsResponse> => ipcRenderer.invoke('demo:embed-texts', payload),
 });

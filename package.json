@@ -16,6 +16,7 @@
     "dev:app": "npm run dev -w demo-electron",
     "dev:dashboard": "npm run dev -w ./apps/dashboard-web",
     "dev:all": "concurrently -k -n agent,app -c cyan,magenta \"npm run dev:agent\" \"npm run dev:app\"",
+    "demo:start": "node ./scripts/demo-start.mjs",
     "test:sdk:smoke": "node scripts/sdk-smoke-test.mjs",
     "test:step16": "node scripts/step16-verify.mjs",
     "test:step17": "node scripts/step17-verify.mjs",
@@ -26,6 +27,7 @@
     "stop:app": "node ./scripts/stop-app.mjs",
     "stop:dashboard": "node ./scripts/stop-dashboard.mjs",
     "stop:all": "npm run stop:app && npm run stop:agent",
+    "demo:stop": "npm run stop:all",
     "reset:db": "npm run reset -w @dyno/agent",
     "reset:agent": "npm run reset -w @dyno/agent"
   },
