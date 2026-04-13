@@ -295,7 +295,7 @@ npm run dev:app
 Required env:
 
 ```powershell
-$env:DYNO_PROJECT_ID="<dashboard_project_id>"
+$env:DYNO_API_KEY="<project_api_key_from_dashboard>"
 $env:DYNO_CONFIG_RESOLVER_URL="http://127.0.0.1:3000"
 $env:DYNO_CONFIG_RESOLVER_SECRET="<same_secret_as_dashboard_server>"
 ```
@@ -342,6 +342,60 @@ When **Create Embedding Job** is clicked in Dyno mode, logs and UI output includ
 - derived execution path (`executionPolicy`, `localMode`)
 - embedding result summary (`executor`, dimensions, preview)
 
+## Control-plane API (Phase 1)
+
+`apps/control-plane-api` now exposes an OpenAI-compatible surface:
+
+- `POST /v1/embeddings`
+- `GET /v1/models`
+
+Dyno-issued API keys are now the canonical auth path. Clients should call Dyno like:
+
+```ts
+import OpenAI from "openai";
+
+const client = new OpenAI({
+  apiKey: process.env.DYNO_API_KEY,
+  baseURL: "http://127.0.0.1:8788/v1",
+});
+```
+
+Flow:
+- create a project API key in dashboard project settings
+- copy the key once (`dyno_live_...`)
+- send it as `Authorization: Bearer <DYNO_API_KEY>`
+- Dyno resolves the project from the key, then uses project-backed Phase 2A config to route local vs cloud
+- Dyno now writes a durable `request_executions` record for handled `POST /v1/embeddings` and `GET /v1/models` requests so project owners can inspect recent outcomes in the dashboard
+
+`X-Project-Id` is no longer required for public integrations. A temporary fallback exists only when `DYNO_ENABLE_X_PROJECT_ID_FALLBACK=true` is set for internal/dev usage.
+
+Required env:
+
+```powershell
+$env:DYNO_CONFIG_RESOLVER_URL="http://127.0.0.1:3000"
+$env:DYNO_CONFIG_RESOLVER_SECRET="<resolver_secret>"
+$env:DYNO_DEMO_CONFIG_RESOLVER_SECRET="<resolver_secret>"
+$env:DYNO_SUPABASE_URL="<supabase_project_url>"
+$env:DYNO_SUPABASE_SERVICE_ROLE_KEY="<supabase_service_role_key>"
+```
+
+Optional env:
+
+```powershell
+$env:DYNO_CONTROL_PLANE_PORT="8788"
+$env:DYNO_AGENT_BASE_URL="http://127.0.0.1:8787"
+$env:DYNO_UPSTREAM_MODEL="text-embedding-3-small"
+$env:DYNO_CONFIG_RESOLVER_SECRET_HEADER="x-dyno-demo-secret"
+$env:DYNO_UPSTREAM_TIMEOUT_MS="20000"
+$env:DYNO_ENABLE_X_PROJECT_ID_FALLBACK="false"
+```
+
+Run:
+
+```bash
+npm run dev:control-plane
+```
+
 ## Scripts (root)
 
 | Script | Description |
@@ -351,8 +405,10 @@ When **Create Embedding Job** is clicked in Dyno mode, logs and UI output includ
 | `npm run clean` | Remove `dist/` (and `*.tsbuildinfo`) under `demo-electron`, `sdk-ts`, and `agent` only |
 | `npm run dev:agent` | Agent: compile + free port + run |
 | `npm run dev:agent:9000` | Same with `PORT=9000` (example; use `PORT` env for other ports) |
+| `npm run dev:control-plane` | Control-plane API: compile + run OpenAI-compatible `/v1` endpoints |
 | `npm run dev:app` | Demo: compile + Electron |
 | `npm run dev:all` | Agent + demo via **concurrently** (one terminal, two processes) |
+| `npm run test:control-plane` | Build + run control-plane API unit tests |
 | `npm run test:sdk:smoke` | Node script: `DynoSdk` health + DB debug (+ machine state unless skipped) |
 | `npm run stop:agent` | Best-effort: stop process(es) listening on agent `PORT` |
 | `npm run stop:app` | Best-effort: stop demo Electron if command line matches `demo-electron` |
@@ -370,5 +426,6 @@ When **Create Embedding Job** is clicked in Dyno mode, logs and UI output includ
     sdk-ts/
     agent/
   apps/
+    control-plane-api/
     demo-electron/
 ```

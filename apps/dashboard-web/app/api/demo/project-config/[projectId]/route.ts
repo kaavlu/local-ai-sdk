@@ -1,4 +1,5 @@
 import { createAdminClient } from '@/lib/supabase/admin'
+import { decryptSecret } from '@/lib/server/secrets'
 import { NextResponse } from 'next/server'
 
 type ProjectRow = {
@@ -11,6 +12,13 @@ type ProjectConfigRow = {
   project_id: string
   local_model: string | null
   cloud_model: string | null
+  logical_model: string
+  upstream_provider_type: 'openai_compatible' | string
+  upstream_base_url: string | null
+  upstream_model: string | null
+  fallback_enabled: boolean
+  upstream_api_key_encrypted: string | null
+  upstream_api_key_last_updated_at: string | null
   requires_charging: boolean
   wifi_only: boolean
   battery_min_percent: number | null
@@ -72,7 +80,7 @@ export async function GET(
       supabase
         .from('project_configs')
         .select(
-          'project_id, local_model, cloud_model, requires_charging, wifi_only, battery_min_percent, idle_min_seconds',
+          'project_id, local_model, cloud_model, logical_model, upstream_provider_type, upstream_base_url, upstream_model, fallback_enabled, upstream_api_key_encrypted, upstream_api_key_last_updated_at, requires_charging, wifi_only, battery_min_percent, idle_min_seconds',
         )
         .eq('project_id', projectId)
         .maybeSingle<ProjectConfigRow>(),
@@ -91,13 +99,26 @@ export async function GET(
       return notFound(`Project config not found for projectId "${projectId}"`)
     }
 
+    const upstreamApiKey = configResult.data.upstream_api_key_encrypted
+      ? decryptSecret(configResult.data.upstream_api_key_encrypted)
+      : null
+
     return NextResponse.json(
       {
         projectId: projectResult.data.id,
         use_case_type: projectResult.data.use_case_type,
         strategy_preset: projectResult.data.strategy_preset,
+        logical_model: configResult.data.logical_model,
+        fallback_enabled: configResult.data.fallback_enabled,
+        upstream_provider_type: configResult.data.upstream_provider_type,
         local_model: configResult.data.local_model,
         cloud_model: configResult.data.cloud_model,
+        upstream_base_url: configResult.data.upstream_base_url,
+        upstream_model: configResult.data.upstream_model ?? configResult.data.cloud_model,
+        upstream_api_key_last_updated_at: configResult.data.upstream_api_key_last_updated_at,
+        upstreamBaseUrl: configResult.data.upstream_base_url,
+        upstreamModel: configResult.data.upstream_model ?? configResult.data.cloud_model,
+        upstreamApiKey: upstreamApiKey ?? undefined,
         requires_charging: configResult.data.requires_charging,
         wifi_only: configResult.data.wifi_only,
         battery_min_percent: configResult.data.battery_min_percent,

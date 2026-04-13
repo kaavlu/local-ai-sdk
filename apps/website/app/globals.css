@@ -1,0 +1,141 @@
+@import 'tailwindcss';
+
+:root {
+  --background: #050507;
+  --card: #0E0E14;
+  --card-hover: #12121a;
+  --secondary: #0A0A0F;
+  --muted: #0D0D13;
+
+  --foreground: #EAEAF0;
+  --foreground-secondary: #8B8BA3;
+  --foreground-muted: #55556a;
+
+  --primary: #7C6CFF;
+  --primary-hover: #6b5ce6;
+  --primary-glow: rgba(124, 108, 255, 0.15);
+  --ring: rgba(124, 108, 255, 0.5);
+
+  --border: rgba(255, 255, 255, 0.06);
+  --border-strong: rgba(255, 255, 255, 0.1);
+
+  --radius: 0.75rem;
+
+  --success: #22c55e;
+}
+
+@theme inline {
+  --font-sans: 'Geist', 'Geist Fallback', system-ui, sans-serif;
+  --font-mono: 'Geist Mono', 'Geist Mono Fallback', monospace;
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-hover: var(--card-hover);
+  --color-secondary: var(--secondary);
+  --color-muted: var(--muted);
+  --color-foreground-secondary: var(--foreground-secondary);
+  --color-foreground-muted: var(--foreground-muted);
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-glow: var(--primary-glow);
+  --color-ring: var(--ring);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-success: var(--success);
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+  body {
+    background-color: var(--background);
+    color: var(--foreground);
+  }
+}
+
+/* Dot grid pattern for hero background */
+.dot-pattern {
+  background-image: radial-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+/* Glow effects */
+.hero-glow {
+  background: radial-gradient(
+    ellipse 60% 50% at 50% 0%,
+    rgba(124, 108, 255, 0.08) 0%,
+    transparent 70%
+  );
+}
+
+.cta-glow {
+  background: radial-gradient(
+    ellipse 50% 60% at 50% 50%,
+    rgba(124, 108, 255, 0.06) 0%,
+    transparent 70%
+  );
+}
+
+.card-glow:hover {
+  box-shadow: 0 0 40px -12px rgba(124, 108, 255, 0.15);
+}
+
+/* Code block styling */
+.code-block {
+  background: #0a0a12;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: var(--radius);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.03),
+    0 8px 40px -12px rgba(0, 0, 0, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.02);
+}
+
+.code-block:hover {
+  border-color: rgba(255, 255, 255, 0.08);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.04),
+    0 8px 40px -12px rgba(0, 0, 0, 0.6),
+    0 0 60px -20px rgba(124, 108, 255, 0.06),
+    inset 0 1px 0 rgba(255, 255, 255, 0.02);
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+/* Smooth global transitions on interactive elements */
+a, button {
+  transition: color 0.15s ease, background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+/* Dashboard preview browser frame */
+.browser-frame {
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--card);
+}
+
+.browser-frame-bar {
+  height: 36px;
+  background: var(--secondary);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  gap: 7px;
+}

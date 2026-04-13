@@ -1,0 +1,21 @@
+{
+  "name": "control-plane-api",
+  "private": true,
+  "version": "0.0.1",
+  "description": "Dyno OpenAI-compatible control-plane API (Phase 1 embeddings)",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "dev": "tsc -p tsconfig.json && node dist/index.js",
+    "test": "npm run build && node --test dist/__tests__/*.test.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.57.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.3"
+  }
+}

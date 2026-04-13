@@ -1,15 +1,24 @@
 import { createClient } from '@/lib/supabase/server'
 import type {
+  CreateProjectApiKeyResult,
   CreateProjectInput,
   Profile,
+  ProjectApiKeyListItem,
+  ProjectRequestExecution,
   Project,
   ProjectConfig,
+  RequestExecutionPath,
+  RequestExecutionStatus,
   ProjectStatus,
+  StrategyPreset,
+  UpstreamProviderType,
   UpdateProfileInput,
   UpdateProjectConfigInput,
   UpdateWorkspaceInput,
   Workspace,
 } from '@/lib/data/dashboard-types'
+import { generateApiKey, hashApiKey } from '@/lib/server/api-keys'
+import { encryptSecret } from '@/lib/server/secrets'
 
 // Example (server page/action): const workspace = await getCurrentWorkspace()
 function formatError(context: string, message: string) {
@@ -19,6 +28,143 @@ function formatError(context: string, message: string) {
 function ensureNonEmptyPatch(context: string, patch: Record<string, unknown>) {
   if (Object.keys(patch).length === 0) {
     throw new Error(`${context}: no fields provided`)
+  }
+}
+
+const UPSTREAM_PROVIDER_TYPES: ReadonlySet<UpstreamProviderType> = new Set(['openai_compatible'])
+
+type ProjectConfigRow = {
+  id: string
+  project_id: string
+  local_model: string | null
+  cloud_model: string | null
+  logical_model: string
+  upstream_provider_type: UpstreamProviderType
+  upstream_base_url: string | null
+  upstream_model: string | null
+  fallback_enabled: boolean
+  upstream_api_key_encrypted: string | null
+  upstream_api_key_last_updated_at: string | null
+  battery_min_percent: number | null
+  idle_min_seconds: number | null
+  requires_charging: boolean
+  wifi_only: boolean
+  created_at: string
+  updated_at: string
+}
+
+type UpdateProjectConfigDbPatch = UpdateProjectConfigInput & {
+  upstream_api_key_encrypted?: string | null
+  upstream_api_key_last_updated_at?: string | null
+}
+
+type ProjectApiKeyRow = {
+  id: string
+  project_id: string
+  label: string | null
+  key_prefix: string
+  created_at: string
+  revoked_at: string | null
+  last_used_at: string | null
+}
+
+type RequestExecutionRow = {
+  id: string
+  project_id: string
+  api_key_id: string | null
+  endpoint: string
+  use_case: string | null
+  logical_model: string | null
+  execution_path: string | null
+  execution_reason: string | null
+  status: string
+  http_status: number | null
+  latency_ms: number | null
+  input_count: number | null
+  error_type: string | null
+  error_code: string | null
+  request_id: string | null
+  created_at: string
+}
+
+function toNullableNonEmptyString(value: string | null | undefined): string | null {
+  if (value == null) {
+    return null
+  }
+  const trimmed = value.trim()
+  return trimmed ? trimmed : null
+}
+
+function isValidAbsoluteUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value)
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
+function mapProjectConfigRow(row: ProjectConfigRow): ProjectConfig {
+  return {
+    id: row.id,
+    project_id: row.project_id,
+    local_model: row.local_model,
+    cloud_model: row.cloud_model,
+    logical_model: row.logical_model,
+    upstream_provider_type: row.upstream_provider_type,
+    upstream_base_url: row.upstream_base_url,
+    upstream_model: row.upstream_model,
+    fallback_enabled: row.fallback_enabled,
+    upstream_api_key_configured: Boolean(row.upstream_api_key_encrypted),
+    upstream_api_key_last_updated_at: row.upstream_api_key_last_updated_at,
+    battery_min_percent: row.battery_min_percent,
+    idle_min_seconds: row.idle_min_seconds,
+    requires_charging: row.requires_charging,
+    wifi_only: row.wifi_only,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  }
+}
+
+function mapProjectApiKeyRow(row: ProjectApiKeyRow): ProjectApiKeyListItem {
+  return {
+    id: row.id,
+    project_id: row.project_id,
+    label: row.label,
+    key_prefix: row.key_prefix,
+    created_at: row.created_at,
+    revoked_at: row.revoked_at,
+    last_used_at: row.last_used_at,
+  }
+}
+
+function normalizeRequestExecutionPath(path: string | null): RequestExecutionPath | null {
+  return path === 'local' || path === 'cloud' || path === 'unknown' ? path : null
+}
+
+function normalizeRequestExecutionStatus(status: string): RequestExecutionStatus {
+  return status === 'error' ? 'error' : 'success'
+}
+
+function mapRequestExecutionRow(row: RequestExecutionRow): ProjectRequestExecution {
+  return {
+    id: row.id,
+    project_id: row.project_id,
+    api_key_id: row.api_key_id,
+    api_key_label: null,
+    endpoint: row.endpoint,
+    use_case: row.use_case,
+    logical_model: row.logical_model,
+    execution_path: normalizeRequestExecutionPath(row.execution_path),
+    execution_reason: row.execution_reason,
+    status: normalizeRequestExecutionStatus(row.status),
+    http_status: row.http_status,
+    latency_ms: row.latency_ms,
+    input_count: row.input_count,
+    error_type: row.error_type,
+    error_code: row.error_code,
+    request_id: row.request_id,
+    created_at: row.created_at,
   }
 }
 
@@ -141,7 +287,7 @@ export async function getProjectConfig(projectId: string): Promise<ProjectConfig
   const { data, error } = await supabase
     .from('project_configs')
     .select(
-      'id, project_id, local_model, cloud_model, battery_min_percent, idle_min_seconds, requires_charging, wifi_only, created_at, updated_at',
+      'id, project_id, local_model, cloud_model, logical_model, upstream_provider_type, upstream_base_url, upstream_model, fallback_enabled, upstream_api_key_encrypted, upstream_api_key_last_updated_at, battery_min_percent, idle_min_seconds, requires_charging, wifi_only, created_at, updated_at',
     )
     .eq('project_id', projectId)
     .maybeSingle()
@@ -150,7 +296,94 @@ export async function getProjectConfig(projectId: string): Promise<ProjectConfig
     throw formatError('Failed to fetch project config', error.message)
   }
 
-  return (data as ProjectConfig | null) ?? null
+  return data ? mapProjectConfigRow(data as ProjectConfigRow) : null
+}
+
+export async function listProjectApiKeys(projectId: string): Promise<ProjectApiKeyListItem[]> {
+  const { supabase } = await getAuthedSupabase()
+  const { data, error } = await supabase
+    .from('project_api_keys')
+    .select('id, project_id, label, key_prefix, created_at, revoked_at, last_used_at')
+    .eq('project_id', projectId)
+    .order('created_at', { ascending: false })
+
+  if (error) {
+    throw formatError('Failed to list project API keys', error.message)
+  }
+
+  return ((data as ProjectApiKeyRow[] | null) ?? []).map(mapProjectApiKeyRow)
+}
+
+export async function listRecentProjectRequestExecutions(
+  projectId: string,
+  limit = 20,
+): Promise<ProjectRequestExecution[]> {
+  const { supabase } = await getAuthedSupabase()
+  const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.min(Math.floor(limit), 100) : 20
+  const { data, error } = await supabase
+    .from('request_executions')
+    .select(
+      'id, project_id, api_key_id, endpoint, use_case, logical_model, execution_path, execution_reason, status, http_status, latency_ms, input_count, error_type, error_code, request_id, created_at',
+    )
+    .eq('project_id', projectId)
+    .order('created_at', { ascending: false })
+    .limit(safeLimit)
+
+  if (error) {
+    // Gracefully handle environments where Phase 2C migration is not applied yet.
+    if (
+      error.code === 'PGRST205' ||
+      error.message.includes("Could not find the table 'public.request_executions'")
+    ) {
+      return []
+    }
+    throw formatError('Failed to list recent project requests', error.message)
+  }
+
+  return ((data as RequestExecutionRow[] | null) ?? []).map(mapRequestExecutionRow)
+}
+
+export async function createProjectApiKey(
+  projectId: string,
+  label?: string | null,
+): Promise<CreateProjectApiKeyResult> {
+  const { supabase } = await getAuthedSupabase()
+  const { plaintextKey, keyPrefix } = generateApiKey()
+  const normalizedLabel = toNullableNonEmptyString(label)
+
+  const { data, error } = await supabase
+    .from('project_api_keys')
+    .insert({
+      project_id: projectId,
+      label: normalizedLabel,
+      key_prefix: keyPrefix,
+      key_hash: hashApiKey(plaintextKey),
+    })
+    .select('id, project_id, label, key_prefix, created_at, revoked_at, last_used_at')
+    .single()
+
+  if (error) {
+    throw formatError('Failed to create project API key', error.message)
+  }
+
+  return {
+    apiKey: plaintextKey,
+    key: mapProjectApiKeyRow(data as ProjectApiKeyRow),
+  }
+}
+
+export async function revokeProjectApiKey(projectId: string, keyId: string): Promise<void> {
+  const { supabase } = await getAuthedSupabase()
+  const { error } = await supabase
+    .from('project_api_keys')
+    .update({ revoked_at: new Date().toISOString() })
+    .eq('id', keyId)
+    .eq('project_id', projectId)
+    .is('revoked_at', null)
+
+  if (error) {
+    throw formatError('Failed to revoke project API key', error.message)
+  }
 }
 
 export async function deleteProject(projectId: string): Promise<void> {
@@ -167,10 +400,36 @@ export async function updateProjectConfig(
   patch: UpdateProjectConfigInput,
 ): Promise<ProjectConfig> {
   const { supabase } = await getAuthedSupabase()
-  const payload: UpdateProjectConfigInput = {}
+  const { data: existingData, error: existingError } = await supabase
+    .from('project_configs')
+    .select(
+      'id, project_id, local_model, cloud_model, logical_model, upstream_provider_type, upstream_base_url, upstream_model, fallback_enabled, upstream_api_key_encrypted, upstream_api_key_last_updated_at, battery_min_percent, idle_min_seconds, requires_charging, wifi_only, created_at, updated_at',
+    )
+    .eq('project_id', projectId)
+    .single()
+
+  if (existingError) {
+    throw formatError('Failed to update project config', existingError.message)
+  }
+
+  const existing = existingData as ProjectConfigRow
+  const payload: UpdateProjectConfigDbPatch = {}
 
   if (patch.local_model !== undefined) payload.local_model = patch.local_model
-  if (patch.cloud_model !== undefined) payload.cloud_model = patch.cloud_model
+  if (patch.cloud_model !== undefined) payload.cloud_model = toNullableNonEmptyString(patch.cloud_model)
+  if (patch.logical_model !== undefined) payload.logical_model = patch.logical_model.trim()
+  if (patch.upstream_provider_type !== undefined) {
+    payload.upstream_provider_type = patch.upstream_provider_type
+  }
+  if (patch.upstream_base_url !== undefined) {
+    payload.upstream_base_url = toNullableNonEmptyString(patch.upstream_base_url)
+  }
+  if (patch.upstream_model !== undefined) {
+    payload.upstream_model = toNullableNonEmptyString(patch.upstream_model)
+  }
+  if (patch.fallback_enabled !== undefined) {
+    payload.fallback_enabled = patch.fallback_enabled
+  }
   if (patch.battery_min_percent !== undefined) {
     payload.battery_min_percent = patch.battery_min_percent
   }
@@ -180,6 +439,64 @@ export async function updateProjectConfig(
   }
   if (patch.wifi_only !== undefined) payload.wifi_only = patch.wifi_only
 
+  if (payload.logical_model !== undefined && !payload.logical_model) {
+    throw new Error('Failed to update project config: logical model is required')
+  }
+  if (
+    payload.upstream_provider_type !== undefined &&
+    !UPSTREAM_PROVIDER_TYPES.has(payload.upstream_provider_type)
+  ) {
+    throw new Error('Failed to update project config: unsupported upstream provider type')
+  }
+  if (payload.upstream_base_url !== undefined && payload.upstream_base_url !== null) {
+    if (!isValidAbsoluteUrl(payload.upstream_base_url)) {
+      throw new Error('Failed to update project config: upstream base URL must be a valid http(s) URL')
+    }
+  }
+  if (payload.upstream_model !== undefined && payload.upstream_model !== null && !payload.upstream_model) {
+    throw new Error('Failed to update project config: upstream model cannot be empty')
+  }
+
+  const plaintextApiKey = toNullableNonEmptyString(patch.upstream_api_key_plaintext)
+  if (plaintextApiKey) {
+    payload.upstream_api_key_encrypted = encryptSecret(plaintextApiKey)
+    payload.upstream_api_key_last_updated_at = new Date().toISOString()
+  }
+
+  const effectiveFallbackEnabled = payload.fallback_enabled ?? existing.fallback_enabled
+  const effectiveUpstreamProviderType = payload.upstream_provider_type ?? existing.upstream_provider_type
+  const effectiveUpstreamBaseUrl = payload.upstream_base_url ?? existing.upstream_base_url
+  const effectiveUpstreamModel =
+    payload.upstream_model ?? payload.cloud_model ?? existing.upstream_model ?? existing.cloud_model
+  const effectiveEncryptedApiKey = payload.upstream_api_key_encrypted ?? existing.upstream_api_key_encrypted
+
+  if (!UPSTREAM_PROVIDER_TYPES.has(effectiveUpstreamProviderType)) {
+    throw new Error('Failed to update project config: unsupported upstream provider type')
+  }
+  if (effectiveFallbackEnabled) {
+    if (!effectiveUpstreamBaseUrl) {
+      throw new Error('Failed to update project config: upstream base URL is required when fallback is enabled')
+    }
+    if (!isValidAbsoluteUrl(effectiveUpstreamBaseUrl)) {
+      throw new Error('Failed to update project config: upstream base URL must be a valid http(s) URL')
+    }
+    if (!effectiveUpstreamModel) {
+      throw new Error('Failed to update project config: upstream model is required when fallback is enabled')
+    }
+    if (!effectiveEncryptedApiKey) {
+      throw new Error(
+        'Failed to update project config: upstream API key is required when fallback is enabled',
+      )
+    }
+  }
+
+  // Keep canonical field authoritative while preserving temporary compatibility reads.
+  if (payload.upstream_model !== undefined) {
+    payload.cloud_model = payload.upstream_model
+  } else if (payload.cloud_model !== undefined) {
+    payload.upstream_model = payload.cloud_model
+  }
+
   ensureNonEmptyPatch('Failed to update project config', payload as Record<string, unknown>)
 
   const { data, error } = await supabase
@@ -187,7 +504,7 @@ export async function updateProjectConfig(
     .update(payload)
     .eq('project_id', projectId)
     .select(
-      'id, project_id, local_model, cloud_model, battery_min_percent, idle_min_seconds, requires_charging, wifi_only, created_at, updated_at',
+      'id, project_id, local_model, cloud_model, logical_model, upstream_provider_type, upstream_base_url, upstream_model, fallback_enabled, upstream_api_key_encrypted, upstream_api_key_last_updated_at, battery_min_percent, idle_min_seconds, requires_charging, wifi_only, created_at, updated_at',
     )
     .single()
 
@@ -195,7 +512,7 @@ export async function updateProjectConfig(
     throw formatError('Failed to update project config', error.message)
   }
 
-  return data as ProjectConfig
+  return mapProjectConfigRow(data as ProjectConfigRow)
 }
 
 export async function updateProjectStatus(
@@ -212,6 +529,25 @@ export async function updateProjectStatus(
 
   if (error) {
     throw formatError('Failed to update project status', error.message)
+  }
+
+  return data as Project
+}
+
+export async function updateProjectStrategyPreset(
+  projectId: string,
+  strategyPreset: StrategyPreset,
+): Promise<Project> {
+  const { supabase } = await getAuthedSupabase()
+  const { data, error } = await supabase
+    .from('projects')
+    .update({ strategy_preset: strategyPreset })
+    .eq('id', projectId)
+    .select('id, workspace_id, name, description, use_case_type, strategy_preset, status, created_at, updated_at')
+    .single()
+
+  if (error) {
+    throw formatError('Failed to update project strategy preset', error.message)
   }
 
   return data as Project

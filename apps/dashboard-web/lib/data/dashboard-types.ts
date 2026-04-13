@@ -8,6 +8,7 @@ export type UseCaseType =
   | 'custom'
 
 export type StrategyPreset = 'local_first' | 'balanced' | 'cloud_first'
+export type UpstreamProviderType = 'openai_compatible'
 
 export type ProjectStatus = 'draft' | 'active'
 
@@ -45,6 +46,13 @@ export interface ProjectConfig {
   project_id: string
   local_model: string | null
   cloud_model: string | null
+  logical_model: string
+  upstream_provider_type: UpstreamProviderType
+  upstream_base_url: string | null
+  upstream_model: string | null
+  fallback_enabled: boolean
+  upstream_api_key_configured: boolean
+  upstream_api_key_last_updated_at: string | null
   battery_min_percent: number | null
   idle_min_seconds: number | null
   requires_charging: boolean
@@ -66,13 +74,58 @@ export type UpdateProjectConfigInput = Partial<
     ProjectConfig,
     | 'local_model'
     | 'cloud_model'
+    | 'logical_model'
+    | 'upstream_provider_type'
+    | 'upstream_base_url'
+    | 'upstream_model'
+    | 'fallback_enabled'
     | 'battery_min_percent'
     | 'idle_min_seconds'
     | 'requires_charging'
     | 'wifi_only'
   >
->
+> & {
+  upstream_api_key_plaintext?: string | null
+}
 
 export type UpdateProfileInput = Partial<Pick<Profile, 'full_name' | 'use_type'>>
 
 export type UpdateWorkspaceInput = Partial<Pick<Workspace, 'name'>>
+
+export interface ProjectApiKeyListItem {
+  id: string
+  project_id: string
+  label: string | null
+  key_prefix: string
+  created_at: string
+  revoked_at: string | null
+  last_used_at: string | null
+}
+
+export interface CreateProjectApiKeyResult {
+  apiKey: string
+  key: ProjectApiKeyListItem
+}
+
+export type RequestExecutionPath = 'local' | 'cloud' | 'unknown'
+export type RequestExecutionStatus = 'success' | 'error'
+
+export interface ProjectRequestExecution {
+  id: string
+  project_id: string
+  api_key_id: string | null
+  api_key_label: string | null
+  endpoint: string
+  use_case: string | null
+  logical_model: string | null
+  execution_path: RequestExecutionPath | null
+  execution_reason: string | null
+  status: RequestExecutionStatus
+  http_status: number | null
+  latency_ms: number | null
+  input_count: number | null
+  error_type: string | null
+  error_code: string | null
+  request_id: string | null
+  created_at: string
+}
