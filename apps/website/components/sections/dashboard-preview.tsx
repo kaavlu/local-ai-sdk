@@ -9,14 +9,13 @@ export function DashboardPreview() {
       <div className="mx-auto max-w-6xl px-6">
         <div className="text-center">
           <p className="text-sm font-medium uppercase tracking-widest text-primary">
-            Control plane
+            Dashboard & control plane
           </p>
           <h2 className="mt-3 text-3xl font-bold tracking-tight text-foreground md:text-4xl">
-            Configure and monitor from the dashboard
+            Configure policy and review telemetry
           </h2>
           <p className="mx-auto mt-3 max-w-2xl text-foreground-secondary">
-            Create projects, set routing strategies, manage API keys, and track
-            request execution — all from one place.
+            Create projects, manage API keys for hosted surfaces, tune local-first policy, and inspect telemetry—config and visibility, not the default inference hot path.
           </p>
         </div>
 
@@ -39,7 +38,7 @@ export function DashboardPreview() {
             <div className="relative">
               <Image
                 src="/dashboard-preview.png"
-                alt="Dyno dashboard showing project configuration and routing overview"
+                alt="Dyno dashboard showing project configuration and telemetry"
                 width={1920}
                 height={1080}
                 className="w-full"
@@ -56,12 +55,12 @@ export function DashboardPreview() {
               desc: 'Organize workloads into projects with isolated configs and API keys.',
             },
             {
-              title: 'Routing strategies',
-              desc: 'Choose local-first, balanced, or cloud-only per project. Change anytime.',
+              title: 'Local-first policy',
+              desc: 'Choose local-first, balanced, or cloud-only per project. Enforced by the SDK/runtime on-device.',
             },
             {
-              title: 'Request monitoring',
-              desc: 'See where each request was routed, latency, and cost in real time.',
+              title: 'Telemetry & visibility',
+              desc: 'Review directional signals from reported executions—local hit rate, fallback reasons, and cost estimates where available.',
             },
           ].map((item) => (
             <div key={item.title} className="text-center">

@@ -1,3 +1,4 @@
+// Dyno local runtime — HTTP service for on-device execution consumed by @dyno/sdk-ts (SDK-first; see repo AGENTS.md).
 import http from 'node:http';
 import type { IncomingMessage } from 'node:http';
 import { getAgentDataDir, getDatabaseDebugInfo, initDatabase } from './db/index.js';

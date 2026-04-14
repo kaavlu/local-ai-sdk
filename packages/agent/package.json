@@ -1,7 +1,7 @@
 {
   "name": "@dyno/agent",
   "version": "0.0.1",
-  "description": "Dyno agent service: HTTP API + local SQLite persistence",
+  "description": "Dyno local runtime: HTTP agent API, on-device execution, SQLite persistence",
   "type": "module",
   "main": "./dist/index.js",
   "scripts": {

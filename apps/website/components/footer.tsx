@@ -31,7 +31,7 @@ export function Footer() {
               </span>
             </Link>
             <p className="mt-3 max-w-xs text-sm leading-relaxed text-foreground-secondary">
-              Local-first AI inference with automatic cloud fallback.
+              SDK-first local AI with developer-owned cloud fallback. Config and telemetry in the control plane.
             </p>
           </div>
 

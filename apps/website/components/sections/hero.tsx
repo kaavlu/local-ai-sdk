@@ -5,20 +5,20 @@ import { motion } from 'framer-motion'
 import { ArrowRight } from 'lucide-react'
 import { CodeBlock } from '../code-block'
 
-const heroCode = `import OpenAI from "openai"
+const heroCode = `import { DynoSdk } from "@dyno/sdk-ts"
 
-const dyno = new OpenAI({
-  apiKey: process.env.DYNO_API_KEY,
-  baseURL: "http://127.0.0.1:8788/v1",
+const sdk = new DynoSdk()
+
+const job = await sdk.createJob({
+  taskType: "embed_text",
+  payload: { text: "How do I reset my password?" },
+  executionPolicy: "cloud_allowed",
+  localMode: "interactive",
 })
 
-const res = await dyno.embeddings.create({
-  model: "text-embedding-3-small",
-  input: "How do I reset my password?",
-})
-
-const embedding = res.data[0].embedding
-// Local when possible. Cloud when needed.`
+await sdk.waitForJobCompletion(job.id)
+const result = await sdk.getJobResult(job.id)
+// Local when possible. Your cloud provider when not.`
 
 export function Hero() {
   return (
@@ -46,9 +46,7 @@ export function Hero() {
               </h1>
 
               <p className="mt-5 max-w-lg text-lg leading-relaxed text-foreground-secondary">
-                Dyno is an SDK that routes inference to on-device models when
-                possible and falls back to cloud providers when not. Cut costs
-                without sacrificing reliability.
+                Dyno is SDK-first: the SDK and local runtime choose on-device execution when it makes sense, and use your existing cloud provider path when it does not—using credentials you already own. The hosted control plane delivers config and telemetry, not the default per-request inference router.
               </p>
 
               <div className="mt-7 flex flex-wrap items-center gap-4">
@@ -68,7 +66,7 @@ export function Hero() {
               </div>
 
               <p className="mt-5 font-mono text-sm text-foreground-muted">
-                npm install openai
+                npm install @dyno/sdk-ts
               </p>
             </motion.div>
           </div>
@@ -78,7 +76,7 @@ export function Hero() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5, delay: 0.15 }}
           >
-            <CodeBlock code={heroCode} filename="app.ts" />
+            <CodeBlock code={heroCode} filename="sdk.ts" />
           </motion.div>
         </div>
       </div>

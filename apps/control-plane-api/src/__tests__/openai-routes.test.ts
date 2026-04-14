@@ -5,7 +5,13 @@ import {
   setRequestExecutionRecorderForTests,
   type RequestExecutionRecordInput,
 } from '../persistence/request-executions.js';
-import { createServer, DYNO_EMBEDDINGS_MODEL_ID, handleEmbeddingsRequest } from '../server.js';
+import {
+  createServer,
+  DYNO_CHAT_MODEL_ID,
+  DYNO_EMBEDDINGS_MODEL_ID,
+  handleChatCompletionsRequest,
+  handleEmbeddingsRequest,
+} from '../server.js';
 
 const originalFetch = global.fetch;
 const originalEnv = {
@@ -14,6 +20,7 @@ const originalEnv = {
   DYNO_CONFIG_RESOLVER_SECRET_HEADER: process.env.DYNO_CONFIG_RESOLVER_SECRET_HEADER,
   DYNO_UPSTREAM_BASE_URL: process.env.DYNO_UPSTREAM_BASE_URL,
   DYNO_UPSTREAM_API_KEY: process.env.DYNO_UPSTREAM_API_KEY,
+  DYNO_UPSTREAM_MODEL: process.env.DYNO_UPSTREAM_MODEL,
   DYNO_AGENT_BASE_URL: process.env.DYNO_AGENT_BASE_URL,
   DYNO_ENABLE_X_PROJECT_ID_FALLBACK: process.env.DYNO_ENABLE_X_PROJECT_ID_FALLBACK,
 };
@@ -26,6 +33,7 @@ afterEach(() => {
   process.env.DYNO_CONFIG_RESOLVER_SECRET_HEADER = originalEnv.DYNO_CONFIG_RESOLVER_SECRET_HEADER;
   process.env.DYNO_UPSTREAM_BASE_URL = originalEnv.DYNO_UPSTREAM_BASE_URL;
   process.env.DYNO_UPSTREAM_API_KEY = originalEnv.DYNO_UPSTREAM_API_KEY;
+  process.env.DYNO_UPSTREAM_MODEL = originalEnv.DYNO_UPSTREAM_MODEL;
   process.env.DYNO_AGENT_BASE_URL = originalEnv.DYNO_AGENT_BASE_URL;
   process.env.DYNO_ENABLE_X_PROJECT_ID_FALLBACK = originalEnv.DYNO_ENABLE_X_PROJECT_ID_FALLBACK;
 });
@@ -371,10 +379,197 @@ test('GET /v1/models requires bearer auth and returns OpenAI-compatible models s
   assert.equal(parsed.object, 'list');
   assert.equal(Array.isArray(parsed.data), true);
   assert.equal(parsed.data[0]?.id, DYNO_EMBEDDINGS_MODEL_ID);
+  assert.equal(parsed.data.some((model) => model.id === DYNO_CHAT_MODEL_ID), true);
   assert.equal(typeof response.requestIdHeader, 'string');
   assert.equal(executions.length, 1);
   assert.equal(executions[0]?.endpoint, '/v1/models');
   assert.equal(executions[0]?.status, 'success');
+});
+
+test('POST /v1/chat/completions succeeds with bearer auth and records cloud execution metadata', async () => {
+  const executions = captureRecordedExecutions();
+  process.env.DYNO_CONFIG_RESOLVER_URL = 'http://resolver.test';
+  process.env.DYNO_UPSTREAM_BASE_URL = 'http://upstream.test';
+  process.env.DYNO_UPSTREAM_API_KEY = 'up-key';
+  process.env.DYNO_UPSTREAM_MODEL = 'gpt-4.1-mini';
+
+  let forwardedModel = '';
+  let forwardedMessages: Array<{ role: string; content: string }> = [];
+
+  global.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input);
+    if (url === 'http://resolver.test/api/demo/auth/resolve-api-key') {
+      return jsonResponse({ projectId: 'proj-chat' });
+    }
+    if (url === 'http://resolver.test/api/demo/project-config/proj-chat') {
+      return jsonResponse({
+        projectId: 'proj-chat',
+        use_case_type: 'text_generation',
+        strategy_preset: 'local_first',
+        fallback_enabled: true,
+        upstream_base_url: 'http://upstream.test',
+        upstream_model: 'gpt-4.1-mini',
+        upstream_api_key: 'project-chat-key',
+        requires_charging: false,
+        wifi_only: false,
+        battery_min_percent: null,
+        idle_min_seconds: null,
+      });
+    }
+    if (url === 'http://upstream.test/v1/chat/completions') {
+      const body = JSON.parse(String(init?.body ?? '{}')) as {
+        model?: string;
+        messages?: Array<{ role: string; content: string }>;
+      };
+      forwardedModel = body.model ?? '';
+      forwardedMessages = body.messages ?? [];
+      return jsonResponse({
+        id: 'chatcmpl-123',
+        object: 'chat.completion',
+        created: 1710000000,
+        model: 'gpt-4.1-mini',
+        choices: [
+          {
+            index: 0,
+            message: {
+              role: 'assistant',
+              content: 'Hello from upstream',
+            },
+            finish_reason: 'stop',
+          },
+        ],
+        usage: {
+          prompt_tokens: 4,
+          completion_tokens: 4,
+          total_tokens: 8,
+        },
+      });
+    }
+    throw new Error(`Unexpected fetch URL in chat success test: ${url}`);
+  }) as typeof global.fetch;
+
+  const result = await handleChatCompletionsRequest(
+    {
+      model: DYNO_CHAT_MODEL_ID,
+      messages: [{ role: 'user', content: 'Hello Dyno' }],
+      temperature: 0.2,
+      max_tokens: 120,
+      user: 'u_123',
+    },
+    { authorization: 'Bearer dyno_live_chat_key' },
+  );
+  const responseBody = result.body as {
+    object?: string;
+    choices?: unknown[];
+  };
+
+  assert.equal(result.status, 200);
+  assert.equal(result.headers?.['X-Dyno-Execution'], 'cloud');
+  assert.equal(result.headers?.['X-Dyno-Reason'], 'local_not_supported');
+  assert.equal(typeof result.headers?.['X-Dyno-Request-Id'], 'string');
+  assert.equal(responseBody.object, 'chat.completion');
+  assert.equal(Array.isArray(responseBody.choices), true);
+  assert.equal(forwardedModel, 'gpt-4.1-mini');
+  assert.equal(forwardedMessages.length, 1);
+  assert.equal(executions.length, 1);
+  assert.equal(executions[0]?.endpoint, '/v1/chat/completions');
+  assert.equal(executions[0]?.status, 'success');
+  assert.equal(executions[0]?.logicalModel, DYNO_CHAT_MODEL_ID);
+  assert.equal(executions[0]?.executionPath, 'cloud');
+  assert.equal(executions[0]?.executionReason, 'local_not_supported');
+  assert.equal(executions[0]?.inputCount, 1);
+  assert.equal(typeof executions[0]?.requestId, 'string');
+  assert.equal(JSON.stringify(executions[0]).includes('Hello Dyno'), false);
+  assert.equal('messages' in (executions[0] as unknown as Record<string, unknown>), false);
+});
+
+test('POST /v1/chat/completions returns authentication_error when bearer token is missing', async () => {
+  const result = await handleChatCompletionsRequest(
+    {
+      model: DYNO_CHAT_MODEL_ID,
+      messages: [{ role: 'user', content: 'hello' }],
+    },
+    {},
+  );
+  const body = result.body as { error?: { type?: string; code?: string } };
+  assert.equal(result.status, 401);
+  assert.equal(body.error?.type, 'authentication_error');
+  assert.equal(body.error?.code, 'missing_api_key');
+});
+
+test('POST /v1/chat/completions returns invalid_request_error for invalid payload', async () => {
+  const result = await handleChatCompletionsRequest(
+    {
+      model: DYNO_CHAT_MODEL_ID,
+      messages: [{ role: 'tool', content: 'bad role' }],
+    },
+    { authorization: 'Bearer dyno_live_chat_key' },
+  );
+  const body = result.body as { error?: { type?: string; code?: string } };
+  assert.equal(result.status, 400);
+  assert.equal(body.error?.type, 'invalid_request_error');
+  assert.equal(body.error?.code, 'invalid_messages');
+});
+
+test('POST /v1/chat/completions returns clean error when upstream config is missing', async () => {
+  const executions = captureRecordedExecutions();
+  process.env.DYNO_CONFIG_RESOLVER_URL = 'http://resolver.test';
+  delete process.env.DYNO_UPSTREAM_BASE_URL;
+  delete process.env.DYNO_UPSTREAM_API_KEY;
+  delete process.env.DYNO_UPSTREAM_MODEL;
+
+  global.fetch = (async (input: string | URL | Request) => {
+    const url = String(input);
+    if (url === 'http://resolver.test/api/demo/auth/resolve-api-key') {
+      return jsonResponse({ projectId: 'proj-chat' });
+    }
+    if (url === 'http://resolver.test/api/demo/project-config/proj-chat') {
+      return jsonResponse({
+        projectId: 'proj-chat',
+        use_case_type: 'text_generation',
+        strategy_preset: 'cloud_first',
+        fallback_enabled: true,
+        upstream_base_url: null,
+        upstream_model: null,
+        upstream_api_key: null,
+        requires_charging: false,
+        wifi_only: false,
+        battery_min_percent: null,
+        idle_min_seconds: null,
+      });
+    }
+    throw new Error(`Unexpected fetch URL in chat-missing-upstream test: ${url}`);
+  }) as typeof global.fetch;
+
+  const result = await handleChatCompletionsRequest(
+    {
+      model: DYNO_CHAT_MODEL_ID,
+      messages: [{ role: 'user', content: 'hello' }],
+    },
+    { authorization: 'Bearer dyno_live_chat_key' },
+  );
+  const body = result.body as { error?: { code?: string } };
+  assert.equal(result.status, 502);
+  assert.equal(body.error?.code, 'upstream_not_configured');
+  assert.equal(executions.length, 1);
+  assert.equal(executions[0]?.endpoint, '/v1/chat/completions');
+  assert.equal(executions[0]?.status, 'error');
+  assert.equal(executions[0]?.executionPath, 'cloud');
+  assert.equal(executions[0]?.executionReason, 'upstream_not_configured');
+});
+
+test('POST /v1/chat/completions returns invalid_request_error when stream is true', async () => {
+  const result = await handleChatCompletionsRequest(
+    {
+      model: DYNO_CHAT_MODEL_ID,
+      messages: [{ role: 'user', content: 'hello' }],
+      stream: true,
+    },
+    { authorization: 'Bearer dyno_live_chat_key' },
+  );
+  const body = result.body as { error?: { code?: string } };
+  assert.equal(result.status, 400);
+  assert.equal(body.error?.code, 'streaming_not_supported');
 });
 
 test('POST /v1/embeddings returns authentication_error when bearer token is missing', async () => {

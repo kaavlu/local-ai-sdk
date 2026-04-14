@@ -14,13 +14,13 @@ const values = [
     icon: Shield,
     title: 'Zero-downtime fallback',
     description:
-      'If local inference fails or isn\u2019t available, Dyno falls back to cloud automatically. No cold starts, no manual error handling \u2014 it just works.',
+      'If local inference fails or isn\u2019t available, the SDK falls back to your existing cloud path automatically—using credentials you already manage.',
   },
   {
     icon: Layers,
-    title: 'One SDK, any provider',
+    title: 'Developer-owned providers',
     description:
-      'Swap between local models, OpenAI, Anthropic, or any provider without changing your code. Dyno abstracts the routing layer completely.',
+      'Keep your relationship with OpenAI, Anthropic, or others for fallback. Dyno orchestrates local-first execution around the path you already have.',
   },
 ]
 

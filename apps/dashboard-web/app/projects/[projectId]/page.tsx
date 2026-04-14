@@ -8,6 +8,7 @@ import {
   getProjectById,
   getProjectConfig,
   listRecentProjectRequestExecutions,
+  listProjectValueSummaryExecutions,
   listProjectApiKeys,
   revokeProjectApiKey,
   updateProjectConfig,
@@ -27,6 +28,7 @@ import { ProjectIntegrationCard } from '@/app/projects/_components/project-integ
 import { ProjectApiKeysCard } from '@/app/projects/_components/project-api-keys-card'
 import { ProjectRecentRequestsCard } from '@/app/projects/_components/project-recent-requests-card'
 import { ProjectSetupSummaryCard } from '@/app/projects/_components/project-setup-summary-card'
+import { ProjectValueSummaryCard } from '@/app/projects/_components/project-value-summary-card'
 import { buildProjectPageViewModel } from '@/lib/data/project-page-view-model'
 import type { ProjectConfig } from '@/lib/data/dashboard-types'
 
@@ -34,6 +36,10 @@ interface ProjectDetailPageProps {
   params: Promise<{
     projectId: string
   }>
+}
+
+function getLogicalModelForUseCase(useCaseType: string): string {
+  return useCaseType === 'text_generation' ? 'dyno-chat-1' : 'dyno-embeddings-1'
 }
 
 export default async function ProjectDetailPage({ params }: ProjectDetailPageProps) {
@@ -54,14 +60,18 @@ export default async function ProjectDetailPage({ params }: ProjectDetailPagePro
   }
   const resolvedProject = project
 
-  const config = await getProjectConfig(resolvedProject.id)
-  const apiKeys = await listProjectApiKeys(resolvedProject.id)
-  const recentRequests = await listRecentProjectRequestExecutions(resolvedProject.id, 20)
+  const [config, apiKeys, recentRequests, valueSummaryExecutions] = await Promise.all([
+    getProjectConfig(resolvedProject.id),
+    listProjectApiKeys(resolvedProject.id),
+    listRecentProjectRequestExecutions(resolvedProject.id, 20),
+    listProjectValueSummaryExecutions(resolvedProject.id, 7),
+  ])
   const pageViewModel = buildProjectPageViewModel({
     project: resolvedProject,
     config,
     apiKeys,
     recentRequests,
+    valueSummaryExecutions,
   })
 
   async function updateProjectConfigAction(
@@ -73,13 +83,15 @@ export default async function ProjectDetailPage({ params }: ProjectDetailPagePro
     const localModelRaw = String(formData.get('localModel') ?? '')
     const strategyPresetRaw = String(formData.get('strategyPreset') ?? '')
     const fallbackEnabledRaw = String(formData.get('fallbackEnabled') ?? 'true')
-    const logicalModelRaw = String(formData.get('logicalModel') ?? '')
     const upstreamProviderTypeRaw = String(formData.get('upstreamProviderType') ?? '')
     const upstreamBaseUrlRaw = String(formData.get('upstreamBaseUrl') ?? '')
     const upstreamModelRaw = String(formData.get('upstreamModel') ?? '')
     const upstreamApiKeyRaw = String(formData.get('upstreamApiKey') ?? '')
     const batteryMinPercentRaw = String(formData.get('batteryMinPercent') ?? '')
     const idleMinSecondsRaw = String(formData.get('idleMinSeconds') ?? '')
+    const estimatedCloudCostPerRequestUsdRaw = String(
+      formData.get('estimatedCloudCostPerRequestUsd') ?? '',
+    )
     const requiresChargingRaw = String(formData.get('requiresCharging') ?? 'false')
     const wifiOnlyRaw = String(formData.get('wifiOnly') ?? 'false')
 
@@ -91,7 +103,6 @@ export default async function ProjectDetailPage({ params }: ProjectDetailPagePro
           ? strategyPresetRaw
           : resolvedProject.strategy_preset,
       fallbackEnabled: fallbackEnabledRaw === 'true',
-      logicalModel: logicalModelRaw,
       upstreamProviderType: upstreamProviderTypeRaw === 'openai_compatible' ? 'openai_compatible' : 'openai_compatible',
       upstreamBaseUrl: upstreamBaseUrlRaw,
       upstreamModel: upstreamModelRaw,
@@ -99,6 +110,7 @@ export default async function ProjectDetailPage({ params }: ProjectDetailPagePro
       localModel: localModelRaw,
       batteryMinPercent: batteryMinPercentRaw,
       idleMinSeconds: idleMinSecondsRaw,
+      estimatedCloudCostPerRequestUsd: estimatedCloudCostPerRequestUsdRaw,
       requiresCharging: requiresChargingRaw === 'true',
       wifiOnly: wifiOnlyRaw === 'true',
     }
@@ -115,8 +127,16 @@ export default async function ProjectDetailPage({ params }: ProjectDetailPagePro
     if (parsedIdle !== null && (!Number.isFinite(parsedIdle) || parsedIdle < 0)) {
       fieldErrors.idleMinSeconds = 'Enter 0 or higher, or leave empty.'
     }
-    if (!values.logicalModel.trim()) {
-      fieldErrors.logicalModel = 'Logical model is required.'
+    const parsedEstimatedCloudCostPerRequestUsd =
+      estimatedCloudCostPerRequestUsdRaw.trim() === ''
+        ? null
+        : Number.parseFloat(estimatedCloudCostPerRequestUsdRaw)
+    if (
+      parsedEstimatedCloudCostPerRequestUsd !== null &&
+      (!Number.isFinite(parsedEstimatedCloudCostPerRequestUsd) ||
+        parsedEstimatedCloudCostPerRequestUsd < 0)
+    ) {
+      fieldErrors.estimatedCloudCostPerRequestUsd = 'Enter 0 or higher, or leave empty.'
     }
     if (!values.upstreamProviderType) {
       fieldErrors.upstreamProviderType = 'Upstream provider type is required.'
@@ -151,9 +171,10 @@ export default async function ProjectDetailPage({ params }: ProjectDetailPagePro
 
     let updatedConfig: ProjectConfig | null = null
     try {
+      const logicalModel = getLogicalModelForUseCase(resolvedProject.use_case_type)
       updatedConfig = await updateProjectConfig(resolvedProject.id, {
         local_model: localModelRaw.trim() || null,
-        logical_model: logicalModelRaw.trim(),
+        logical_model: logicalModel,
         upstream_provider_type: values.upstreamProviderType,
         upstream_base_url: upstreamBaseUrlRaw.trim() || null,
         upstream_model: upstreamModelRaw.trim() || null,
@@ -161,6 +182,7 @@ export default async function ProjectDetailPage({ params }: ProjectDetailPagePro
         upstream_api_key_plaintext: upstreamApiKeyRaw.trim() || null,
         battery_min_percent: parsedBattery,
         idle_min_seconds: parsedIdle,
+        estimated_cloud_cost_per_request_usd: parsedEstimatedCloudCostPerRequestUsd,
         requires_charging: values.requiresCharging,
         wifi_only: values.wifiOnly,
       })
@@ -255,71 +277,87 @@ export default async function ProjectDetailPage({ params }: ProjectDetailPagePro
 
   return (
     <DashboardLayout userEmail={user.email}>
-      <div className="mb-6 flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-[15px] font-semibold text-foreground tracking-tight">{resolvedProject.name}</h1>
-          {resolvedProject.description ? (
-            <p className="mt-1 max-w-[640px] text-[12px] text-muted-foreground/80">{resolvedProject.description}</p>
-          ) : (
-            <p className="mt-1 text-[12px] text-muted-foreground/65">No description provided.</p>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
-          <ProjectDeleteAction projectName={resolvedProject.name} action={deleteProjectAction} />
-          <Button asChild variant="outline" className="h-[32px] rounded-sm text-[11px] font-medium">
-            <Link href="/projects">Back to Projects</Link>
-          </Button>
-        </div>
-      </div>
-
-      <div className="space-y-3">
-        <div className="rounded-lg border border-border/40 bg-card p-5">
-          <div className="mb-3 flex flex-wrap items-center gap-1.5">
-            <Badge variant="secondary" className="rounded-sm px-1.5 text-[10px] uppercase tracking-wide">
-              {resolvedProject.use_case_type.replace(/_/g, ' ')}
-            </Badge>
-            <Badge variant="outline" className="rounded-sm border-border/50 px-1.5 text-[10px]">
-              {resolvedProject.strategy_preset.replace(/_/g, ' ')}
-            </Badge>
-            <Badge
-              variant={resolvedProject.status === 'active' ? 'default' : 'secondary'}
-              className="rounded-sm px-1.5 text-[10px] capitalize"
-            >
-              {resolvedProject.status}
-            </Badge>
+      <div className="space-y-4">
+        <section className="rounded-xl border border-border/55 bg-card/95 p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="max-w-3xl">
+              <p className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground/75">Project</p>
+              <h1 className="mt-1 text-[20px] font-semibold tracking-tight text-foreground">{resolvedProject.name}</h1>
+              {resolvedProject.description ? (
+                <p className="mt-2 text-[12px] leading-relaxed text-muted-foreground/85">
+                  {resolvedProject.description}
+                </p>
+              ) : (
+                <p className="mt-2 text-[12px] text-muted-foreground/65">No description provided.</p>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <ProjectDeleteAction projectName={resolvedProject.name} action={deleteProjectAction} />
+              <Button asChild variant="outline" className="h-8 rounded-md border-border/60 px-3 text-[11px] font-medium">
+                <Link href="/projects">Back to Projects</Link>
+              </Button>
+            </div>
           </div>
-        </div>
 
-        <ProjectSetupSummaryCard summary={pageViewModel} />
+          <div className="mt-4 grid gap-2 sm:grid-cols-3">
+            <div className="rounded-lg border border-border/45 bg-background/35 px-3 py-2.5">
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground/70">Use case</p>
+              <Badge variant="secondary" className="mt-1 rounded-md px-2 py-0.5 text-[10px] uppercase tracking-wide">
+                {resolvedProject.use_case_type.replace(/_/g, ' ')}
+              </Badge>
+            </div>
+            <div className="rounded-lg border border-border/45 bg-background/35 px-3 py-2.5">
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground/70">Routing strategy</p>
+              <Badge variant="outline" className="mt-1 rounded-md border-border/55 px-2 py-0.5 text-[10px] capitalize">
+                {resolvedProject.strategy_preset.replace(/_/g, ' ')}
+              </Badge>
+            </div>
+            <div className="rounded-lg border border-border/45 bg-background/35 px-3 py-2.5">
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground/70">Project status</p>
+              <Badge
+                variant={resolvedProject.status === 'active' ? 'default' : 'secondary'}
+                className="mt-1 rounded-md px-2 py-0.5 text-[10px] capitalize"
+              >
+                {resolvedProject.status}
+              </Badge>
+            </div>
+          </div>
+        </section>
 
-        <ProjectIntegrationCard
-          baseUrl={pageViewModel.integration.baseUrl}
-          logicalModel={pageViewModel.integration.logicalModel}
-          openAiSnippet={pageViewModel.integration.openAiSnippet}
-          curlSnippet={pageViewModel.integration.curlSnippet}
-          hasApiKeys={pageViewModel.health.hasApiKeys}
-        />
-
-        <ProjectConfigForm
-          projectId={resolvedProject.id}
-          initialStrategyPreset={resolvedProject.strategy_preset}
-          initialConfig={config}
-          action={updateProjectConfigAction}
-        />
-
-        <div className="grid items-stretch gap-3 lg:grid-cols-2">
-          <ProjectApiKeysCard
-            keys={apiKeys}
-            activeKeyCount={pageViewModel.health.activeApiKeyCount}
-            createAction={createProjectApiKeyAction}
-            revokeAction={revokeProjectApiKeyAction}
+        <div className="space-y-4">
+          <ProjectConfigForm
+            projectId={resolvedProject.id}
+            useCaseType={resolvedProject.use_case_type}
+            initialStrategyPreset={resolvedProject.strategy_preset}
+            initialConfig={config}
+            action={updateProjectConfigAction}
           />
-          <ProjectRecentRequestsCard
-            requests={recentRequests}
-            logicalModel={pageViewModel.integration.logicalModel}
-            hasRecentFailures={pageViewModel.guidance.hasRecentFailures}
-            className="h-full"
+
+          <div className="grid gap-4 xl:grid-cols-2">
+            <ProjectSetupSummaryCard summary={pageViewModel} />
+            <ProjectValueSummaryCard summary={pageViewModel} />
+          </div>
+
+          <ProjectIntegrationCard
+            baseUrl={pageViewModel.integration.baseUrl}
+            openAiSnippet={pageViewModel.integration.openAiSnippet}
+            curlSnippet={pageViewModel.integration.curlSnippet}
+            hasApiKeys={pageViewModel.health.hasApiKeys}
           />
+
+          <div className="grid items-stretch gap-4 xl:grid-cols-2">
+            <ProjectApiKeysCard
+              keys={apiKeys}
+              activeKeyCount={pageViewModel.health.activeApiKeyCount}
+              createAction={createProjectApiKeyAction}
+              revokeAction={revokeProjectApiKeyAction}
+            />
+            <ProjectRecentRequestsCard
+              requests={recentRequests}
+              hasRecentFailures={pageViewModel.guidance.hasRecentFailures}
+              className="h-full"
+            />
+          </div>
         </div>
       </div>
     </DashboardLayout>

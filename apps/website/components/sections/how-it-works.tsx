@@ -7,23 +7,23 @@ const steps = [
   {
     number: '01',
     icon: Code2,
-    title: 'Your app calls Dyno',
+    title: 'Integrate the Dyno SDK',
     description:
-      'Replace your direct provider call with a single Dyno SDK call. Same API surface, zero friction.',
+      'Use @dyno/sdk-ts against the local runtime—the default path for local-first execution with your existing cloud fallback.',
   },
   {
     number: '02',
     icon: GitBranch,
-    title: 'Dyno evaluates the request',
+    title: 'SDK/runtime evaluates on-device',
     description:
-      'Model availability, device capability, and your routing configuration determine the optimal target.',
+      'Model availability, device signals, and project policy (from the control plane) inform a fast local vs cloud decision on the user’s device.',
   },
   {
     number: '03',
     icon: Zap,
-    title: 'Routes to the best target',
+    title: 'Run locally or use your cloud path',
     description:
-      'Runs locally on-device when possible. Falls back to cloud providers automatically when not.',
+      'Executes on-device when viable. Otherwise falls back to the app’s existing provider client and credentials—Dyno is not a hosted inference broker in the default architecture.',
   },
 ]
 
@@ -48,11 +48,12 @@ export function HowItWorks() {
             How it works
           </p>
           <h2 className="mt-3 text-3xl font-bold tracking-tight text-foreground md:text-4xl">
-            Three steps. Zero infra changes.
+            Three steps. SDK-first.
           </h2>
           <p className="mx-auto mt-3 max-w-2xl text-foreground-secondary">
-            Dyno sits between your application and AI providers. Your code
-            doesn&apos;t change — Dyno handles the routing.
+            The control plane delivers configuration and telemetry. Local vs cloud
+            happens in the SDK and local runtime—not by proxying every production
+            request through hosted Dyno servers.
           </p>
         </div>
 

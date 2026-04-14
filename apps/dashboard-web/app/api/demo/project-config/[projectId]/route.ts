@@ -23,6 +23,7 @@ type ProjectConfigRow = {
   wifi_only: boolean
   battery_min_percent: number | null
   idle_min_seconds: number | null
+  estimated_cloud_cost_per_request_usd: number | null
 }
 
 function unauthorized() {
@@ -80,7 +81,7 @@ export async function GET(
       supabase
         .from('project_configs')
         .select(
-          'project_id, local_model, cloud_model, logical_model, upstream_provider_type, upstream_base_url, upstream_model, fallback_enabled, upstream_api_key_encrypted, upstream_api_key_last_updated_at, requires_charging, wifi_only, battery_min_percent, idle_min_seconds',
+          'project_id, local_model, cloud_model, logical_model, upstream_provider_type, upstream_base_url, upstream_model, fallback_enabled, upstream_api_key_encrypted, upstream_api_key_last_updated_at, requires_charging, wifi_only, battery_min_percent, idle_min_seconds, estimated_cloud_cost_per_request_usd',
         )
         .eq('project_id', projectId)
         .maybeSingle<ProjectConfigRow>(),
@@ -123,6 +124,7 @@ export async function GET(
         wifi_only: configResult.data.wifi_only,
         battery_min_percent: configResult.data.battery_min_percent,
         idle_min_seconds: configResult.data.idle_min_seconds,
+        estimated_cloud_cost_per_request_usd: configResult.data.estimated_cloud_cost_per_request_usd,
       },
       {
         status: 200,

@@ -2,7 +2,7 @@
   "name": "dyno",
   "private": true,
   "version": "0.0.1",
-  "description": "Dyno — local-first AI SDK monorepo",
+  "description": "Dyno — SDK-first local-first AI monorepo (control plane = config + telemetry)",
   "workspaces": [
     "packages/*",
     "apps/*"

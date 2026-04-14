@@ -1,3 +1,4 @@
+// Control plane API: project config resolution + telemetry ingestion; optional OpenAI-compatible `/v1/*` routes for sandbox/tooling (SDK + local runtime remain the default integration path — see repo AGENTS.md).
 import { createServer } from './server.js';
 
 const port = Number(process.env.DYNO_CONTROL_PLANE_PORT || process.env.PORT || '8788');

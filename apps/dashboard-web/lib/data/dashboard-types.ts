@@ -55,6 +55,7 @@ export interface ProjectConfig {
   upstream_api_key_last_updated_at: string | null
   battery_min_percent: number | null
   idle_min_seconds: number | null
+  estimated_cloud_cost_per_request_usd: number | null
   requires_charging: boolean
   wifi_only: boolean
   created_at: string
@@ -81,6 +82,7 @@ export type UpdateProjectConfigInput = Partial<
     | 'fallback_enabled'
     | 'battery_min_percent'
     | 'idle_min_seconds'
+    | 'estimated_cloud_cost_per_request_usd'
     | 'requires_charging'
     | 'wifi_only'
   >
@@ -127,5 +129,12 @@ export interface ProjectRequestExecution {
   error_type: string | null
   error_code: string | null
   request_id: string | null
+  created_at: string
+}
+
+export interface ProjectValueSummaryExecution {
+  project_id: string
+  status: RequestExecutionStatus
+  execution_path: RequestExecutionPath | null
   created_at: string
 }

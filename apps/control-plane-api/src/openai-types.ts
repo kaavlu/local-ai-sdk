@@ -6,6 +6,42 @@ export interface OpenAiEmbeddingsRequest {
   user?: string;
 }
 
+export type OpenAiChatRole = 'system' | 'user' | 'assistant';
+
+export interface OpenAiChatMessage {
+  role: OpenAiChatRole;
+  content: string;
+}
+
+export interface OpenAiChatCompletionsRequest {
+  model: string;
+  messages: OpenAiChatMessage[];
+  temperature?: number;
+  max_tokens?: number;
+  user?: string;
+  stream?: boolean;
+  [key: string]: unknown;
+}
+
+export interface OpenAiChatCompletionResponse {
+  id: string;
+  object: 'chat.completion';
+  created: number;
+  model: string;
+  choices: Array<{
+    index: number;
+    message: {
+      role: 'assistant';
+      content: string | null;
+      [key: string]: unknown;
+    };
+    finish_reason: string | null;
+    [key: string]: unknown;
+  }>;
+  usage?: OpenAiUsage;
+  [key: string]: unknown;
+}
+
 export interface OpenAiEmbeddingDataItem {
   object: 'embedding';
   embedding: number[];

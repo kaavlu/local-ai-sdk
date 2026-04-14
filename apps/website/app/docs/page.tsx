@@ -5,23 +5,9 @@ import { motion } from 'framer-motion'
 import { ArrowRight, BookOpen, Code2, Rocket, Settings } from 'lucide-react'
 import { CodeBlock } from '@/components/code-block'
 
-const installCode = `npm install openai`
+const sdkInstallCode = `npm install @dyno/sdk-ts`
 
-const usageCode = `import OpenAI from "openai"
-
-// Point the OpenAI SDK at your local Dyno control plane
-const dyno = new OpenAI({
-  apiKey: process.env.DYNO_API_KEY,
-  baseURL: "http://127.0.0.1:8788/v1",
-})
-
-// Make an embeddings request — Dyno routes automatically
-const res = await dyno.embeddings.create({
-  model: "text-embedding-3-small",
-  input: "How do I reset my password?",
-})
-
-console.log(res.data[0].embedding)  // float[]`
+const optionalOpenAiInstallCode = `npm install openai`
 
 const directSdkCode = `import { DynoSdk } from "@dyno/sdk-ts"
 
@@ -37,26 +23,41 @@ const job = await sdk.createJob({
 const done = await sdk.waitForJobCompletion(job.id)
 const result = await sdk.getJobResult(job.id)`
 
+const optionalOpenAiUsageCode = `import OpenAI from "openai"
+
+// Optional: point the OpenAI SDK at the hosted OpenAI-compatible API (sandbox, demos, tooling).
+const dyno = new OpenAI({
+  apiKey: process.env.DYNO_API_KEY,
+  baseURL: "http://127.0.0.1:8788/v1",
+})
+
+const res = await dyno.embeddings.create({
+  model: "text-embedding-3-small",
+  input: "How do I reset my password?",
+})
+
+console.log(res.data[0].embedding)  // float[]`
+
 const sections = [
   {
     icon: Rocket,
     title: 'Quickstart',
     description:
-      'Install the OpenAI SDK, configure your Dyno API key, and make your first routed inference call in under 5 minutes.',
+      'Install @dyno/sdk-ts, connect the local runtime, and run your first job—the default integration path.',
     href: '#quickstart',
   },
   {
     icon: Settings,
     title: 'Configuration',
     description:
-      'Set routing strategies, configure provider fallbacks, and tune local model preferences per project.',
+      'Project policy from the dashboard; the SDK applies it on-device with developer-owned cloud credentials.',
     href: '#config',
   },
   {
     icon: Code2,
     title: 'SDK Reference',
     description:
-      'OpenAI-compatible API reference and direct @dyno/sdk-ts API for local-first execution control.',
+      '@dyno/sdk-ts for the local runtime; optional hosted OpenAI-compatible API for secondary use cases.',
     href: '#reference',
   },
   {
@@ -88,8 +89,7 @@ export default function DocsPage() {
             Documentation
           </h1>
           <p className="mt-4 text-lg text-foreground-secondary">
-            Everything you need to integrate Dyno into your application.
-            Use the OpenAI SDK you already know, or the direct SDK for full control.
+            Dyno is SDK-first: integrate <code className="rounded bg-card px-1.5 py-0.5 text-xs text-foreground-secondary">@dyno/sdk-ts</code> and the local runtime for on-device execution with your existing cloud fallback. The hosted control plane provides configuration and telemetry—not the default per-request inference router.
           </p>
         </div>
 
@@ -133,10 +133,10 @@ export default function DocsPage() {
           <div className="mt-8 space-y-10">
             <div>
               <h3 className="text-base font-semibold text-foreground">
-                1. Install the OpenAI SDK
+                1. Install the Dyno SDK
               </h3>
               <div className="mt-3 max-w-xl">
-                <CodeBlock code={installCode} showLineNumbers={false} />
+                <CodeBlock code={sdkInstallCode} showLineNumbers={false} />
               </div>
             </div>
 
@@ -158,12 +158,15 @@ export default function DocsPage() {
 
             <div>
               <h3 className="text-base font-semibold text-foreground">
-                3. Make your first request (OpenAI-compatible)
+                3. Run a job via the SDK (default path)
               </h3>
+              <p className="mt-2 mb-3 text-sm text-foreground-secondary">
+                With the local runtime running, create a job and wait for the result. Local vs cloud is decided on-device per policy—not by routing every request through the hosted control plane.
+              </p>
               <div className="mt-3 max-w-2xl">
                 <CodeBlock
-                  code={usageCode}
-                  filename="app.ts"
+                  code={directSdkCode}
+                  filename="local-first.ts"
                   showLineNumbers
                 />
               </div>
@@ -171,16 +174,18 @@ export default function DocsPage() {
 
             <div>
               <h3 className="text-base font-semibold text-foreground">
-                Alternative: Direct SDK for execution control
+                Optional: OpenAI SDK against the hosted OpenAI-compatible API
               </h3>
               <p className="mt-2 mb-3 text-sm text-foreground-secondary">
-                When you need explicit control over local vs. cloud execution
-                policy, use <code className="rounded bg-card px-1.5 py-0.5 text-xs text-foreground-secondary">@dyno/sdk-ts</code> directly.
+                For sandbox, demos, or compatibility testing, you can point the OpenAI client at Dyno&apos;s optional OpenAI-compatible endpoint. This is secondary to the SDK + local runtime integration described above.
               </p>
-              <div className="max-w-2xl">
+              <div className="mt-3 max-w-xl">
+                <CodeBlock code={optionalOpenAiInstallCode} showLineNumbers={false} />
+              </div>
+              <div className="mt-4 max-w-2xl">
                 <CodeBlock
-                  code={directSdkCode}
-                  filename="local-control.ts"
+                  code={optionalOpenAiUsageCode}
+                  filename="optional-openai-compat.ts"
                   showLineNumbers
                 />
               </div>

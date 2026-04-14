@@ -2,7 +2,7 @@
   "name": "control-plane-api",
   "private": true,
   "version": "0.0.1",
-  "description": "Dyno OpenAI-compatible control-plane API (Phase 1 embeddings)",
+  "description": "Dyno control plane API: project config resolution, telemetry, and optional OpenAI-compatible routes (secondary to SDK + local runtime)",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {

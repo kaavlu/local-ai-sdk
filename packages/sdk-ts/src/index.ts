@@ -1,3 +1,4 @@
+/** Public exports for `@dyno/sdk-ts` — primary SDK integration surface for the local runtime (SDK-first architecture; see repo AGENTS.md). */
 export { DynoSdk, DynoSdkError } from './client.js';
 export {
   createDemoProjectSdkContext,

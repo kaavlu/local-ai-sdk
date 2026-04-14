@@ -1,6 +1,6 @@
 import type { UseCaseType } from '@/lib/data/dashboard-types'
 
-export const SUPPORTED_USE_CASES: readonly UseCaseType[] = ['embeddings']
+export const SUPPORTED_USE_CASES: readonly UseCaseType[] = ['embeddings', 'text_generation']
 
 export const SUPPORTED_USE_CASE_OPTIONS: ReadonlyArray<{
   value: UseCaseType
@@ -9,6 +9,10 @@ export const SUPPORTED_USE_CASE_OPTIONS: ReadonlyArray<{
   {
     value: 'embeddings',
     label: 'text_embeddings',
+  },
+  {
+    value: 'text_generation',
+    label: 'chat_completions',
   },
 ]
 

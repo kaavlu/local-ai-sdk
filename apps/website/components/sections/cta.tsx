@@ -17,11 +17,11 @@ export function CTA() {
         transition={{ duration: 0.45 }}
       >
         <h2 className="text-3xl font-bold tracking-tight text-foreground md:text-4xl lg:text-5xl">
-          Start saving on inference today
+          Start cutting cloud usage without giving up reliability
         </h2>
         <p className="mt-4 text-lg text-foreground-secondary">
-          Create a project, configure your routing strategy, and integrate the
-          SDK in under 5 minutes.
+          Create a project, tune local-first policy in the dashboard, and wire up
+          the SDK and local runtime.
         </p>
 
         <div className="mt-8 flex flex-wrap items-center justify-center gap-4">

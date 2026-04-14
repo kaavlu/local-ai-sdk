@@ -4,33 +4,34 @@ import { motion } from 'framer-motion'
 
 const features = [
   {
-    title: 'TypeScript & Python SDKs',
-    description: 'First-class support for both ecosystems. Typed clients with full autocomplete.',
+    title: 'TypeScript SDK',
+    description:
+      'Typed client for the local runtime and integration helpers. The primary surface for app developers.',
   },
   {
-    title: 'Provider-agnostic',
+    title: 'Provider-agnostic fallback',
     description:
-      'Works with OpenAI, Anthropic, local GGUF models, and more. Add providers without code changes.',
+      'Use your existing cloud provider client for fallback; Dyno does not replace your credential story in the default architecture.',
   },
   {
-    title: 'Sub-100ms routing',
+    title: 'Fast on-device decisions',
     description:
-      'The SDK adds negligible latency. Routing decisions happen locally before the request leaves your app.',
+      'Local vs cloud decisions run in the SDK/runtime on the user’s device—bounded, predictable, and fail-safe.',
   },
   {
     title: 'Open configuration',
     description:
-      'Routing rules are project-level, auditable, and managed from the dashboard. No vendor lock-in.',
+      'Policy and rollout settings are project-level and managed from the dashboard; the SDK enforces them locally.',
   },
   {
     title: 'Embeddings & completions',
     description:
-      'Supports embedding models and generative models. Route any inference type through Dyno.',
+      'Support embedding and generative workloads through the SDK and local runtime, with cloud fallback when needed.',
   },
   {
     title: 'Secure by default',
     description:
-      'API keys are project-scoped. Local inference never leaves the device. Cloud calls use your own provider keys.',
+      'API keys are project-scoped for hosted surfaces. Local inference stays on-device. Cloud calls use your own provider keys.',
   },
 ]
 

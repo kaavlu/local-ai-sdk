@@ -1,14 +1,10 @@
-# Dyno (local-first AI SDK)
+# Dyno (SDK-first, local-first AI)
 
-Dyno is a TypeScript monorepo for local-first AI execution and OpenAI-compatible access.
-It currently includes:
+Dyno is a **SDK-first** TypeScript monorepo for **local-first** AI execution: apps integrate the Dyno SDK and local runtime so workloads can run on the **end user’s device** when viable, and fall back to the developer’s **existing cloud provider** using **developer-owned** credentials.
 
-- `@dyno/agent`: local execution agent (SQLite + worker + local model runtimes)
-- `@dyno/sdk-ts`: typed TypeScript client for the agent and demo config helpers
-- `apps/control-plane-api`: OpenAI-compatible `v1` surface (`/v1/models`, `/v1/embeddings`, `/v1/chat/completions`)
-- `apps/demo-electron`: semantic-search demo app with Dyno or Gemini embedding backends
-- `apps/dashboard-web`: dashboard + demo resolver/auth routes backed by Supabase
-- `apps/website`: marketing website
+The **hosted control plane** (dashboard + backend APIs) provides **project configuration** and **telemetry ingestion**. It is **not** the canonical per-request inference router in the main product architecture (see `AGENTS.md`).
+
+This repo also ships an **optional** OpenAI-compatible HTTP surface in `apps/control-plane-api` for sandbox, demos, enterprise, and compatibility testing. Treat it as **secondary** to the **SDK + local runtime** integration path.
 
 ## Prerequisites
 
@@ -40,7 +36,7 @@ npm install
 
 ### `packages/agent` (`@dyno/agent`)
 
-Local HTTP service (default `http://127.0.0.1:8787`) with:
+**Local runtime** service (default `http://127.0.0.1:8787`) with:
 
 - job queue + worker lifecycle (`queued`, `running`, `completed`, `failed`, `cancelled`)
 - policy-aware local/cloud scheduling (`executionPolicy`, `localMode`)
@@ -59,7 +55,7 @@ Main routes include:
 
 ### `packages/sdk-ts` (`@dyno/sdk-ts`)
 
-Typed HTTP client for agent APIs (default base URL `http://127.0.0.1:8787`) plus demo helpers:
+Primary **SDK integration surface**: typed HTTP client for the local runtime (default base URL `http://127.0.0.1:8787`) plus demo config helpers:
 
 - `DynoSdk` operations for jobs, health, machine state, debug endpoints, model warmup
 - worker controls (`pauseWorker`, `resumeWorker`)
@@ -69,20 +65,22 @@ Typed HTTP client for agent APIs (default base URL `http://127.0.0.1:8787`) plus
 
 ### `apps/control-plane-api`
 
-OpenAI-compatible server (default `http://127.0.0.1:8788`) exposing:
+**Control plane API** process (default `http://127.0.0.1:8788`).
+
+**Configuration and telemetry:** resolves project context via dashboard resolver endpoints and, when configured, persists request outcomes to Supabase (`request_executions`) for visibility in the dashboard.
+
+**Optional OpenAI-compatible routes** (secondary to SDK + local runtime):
 
 - `GET /v1/models`
 - `POST /v1/embeddings`
 - `POST /v1/chat/completions`
 
-Auth and routing behavior:
+Auth and execution notes:
 
 - primary auth is Dyno API key via `Authorization: Bearer <dyno key>`
 - optional `X-Project-Id` fallback can be enabled for dev only (`DYNO_ENABLE_X_PROJECT_ID_FALLBACK=true`)
-- project config is resolved through dashboard resolver endpoints
-- request outcomes are persisted to Supabase (`request_executions`) when configured
-- embeddings choose local agent vs cloud upstream based on resolved project config and readiness
-- chat/completions are cloud-only in this phase and route to the configured upstream OpenAI-compatible provider
+- embeddings may use the local agent vs cloud upstream based on resolved project config and readiness
+- chat/completions are cloud-only in this phase and forward to the configured upstream OpenAI-compatible provider
 
 ### `apps/demo-electron`
 
@@ -95,12 +93,12 @@ Dyno mode uses project config resolver + local agent; Gemini mode calls Gemini e
 
 ### `apps/dashboard-web`
 
-Next.js dashboard app with Supabase-backed project management and demo routes:
+Next.js **control plane UI** with Supabase-backed project management and demo routes:
 
 - `GET /api/demo/project-config/[projectId]`
 - `POST /api/demo/auth/resolve-api-key`
 
-These routes support demo integration and control-plane key resolution.
+These routes support demo integration and control-plane key resolution for hosted surfaces.
 
 ### `apps/website`
 
@@ -113,9 +111,9 @@ Separate Next.js marketing site (dev port `3100`).
 | `npm run build` | Build all workspaces (`--if-present`) |
 | `npm run typecheck` | Typecheck all workspaces (`--if-present`) |
 | `npm run clean` | Remove `dist/` and `*.tsbuildinfo` only in `apps/demo-electron`, `packages/sdk-ts`, `packages/agent` |
-| `npm run dev:agent` | Start local Dyno agent |
+| `npm run dev:agent` | Start local Dyno agent (local runtime) |
 | `npm run dev:agent:9000` | Start agent with `PORT=9000` |
-| `npm run dev:control-plane` | Start OpenAI-compatible control-plane API |
+| `npm run dev:control-plane` | Start control-plane API (config resolver + optional OpenAI-compatible routes) |
 | `npm run dev:dashboard` | Start dashboard web app |
 | `npm run dev:app` | Start Electron demo app |
 | `npm run dev:all` | Start agent + app together |
@@ -178,7 +176,7 @@ Common server-side requirements:
 - Supabase service-role key (`SUPABASE_SERVICE_ROLE_KEY` or `DYNO_DEMO_SUPABASE_SERVICE_ROLE_KEY`)
 - optional `DYNO_SECRETS_ENCRYPTION_KEY` for encrypted secret storage paths
 
-### Control Plane (`apps/control-plane-api`)
+### Control Plane API (`apps/control-plane-api`)
 
 Required for project-backed auth/config:
 
@@ -201,4 +199,4 @@ Common additional vars:
 
 - The first local model run may be slower due to model initialization/download.
 - `npm run stop:*` scripts are best-effort helpers; prefer stopping from the original terminal when possible.
-- This README intentionally documents current behavior and scripts from source, not historical step-by-step milestone notes.
+- This README documents current behavior and scripts from source. Product positioning is canonical in `AGENTS.md`.

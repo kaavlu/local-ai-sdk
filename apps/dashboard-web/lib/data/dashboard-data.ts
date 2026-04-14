@@ -5,6 +5,7 @@ import type {
   Profile,
   ProjectApiKeyListItem,
   ProjectRequestExecution,
+  ProjectValueSummaryExecution,
   Project,
   ProjectConfig,
   RequestExecutionPath,
@@ -47,6 +48,7 @@ type ProjectConfigRow = {
   upstream_api_key_last_updated_at: string | null
   battery_min_percent: number | null
   idle_min_seconds: number | null
+  estimated_cloud_cost_per_request_usd: number | string | null
   requires_charging: boolean
   wifi_only: boolean
   created_at: string
@@ -87,12 +89,27 @@ type RequestExecutionRow = {
   created_at: string
 }
 
+type ValueSummaryExecutionRow = {
+  project_id: string
+  status: string
+  execution_path: string | null
+  created_at: string
+}
+
 function toNullableNonEmptyString(value: string | null | undefined): string | null {
   if (value == null) {
     return null
   }
   const trimmed = value.trim()
   return trimmed ? trimmed : null
+}
+
+function toNullableNumber(value: number | string | null | undefined): number | null {
+  if (value == null) {
+    return null
+  }
+  const parsed = typeof value === 'number' ? value : Number.parseFloat(value)
+  return Number.isFinite(parsed) ? parsed : null
 }
 
 function isValidAbsoluteUrl(value: string): boolean {
@@ -102,6 +119,10 @@ function isValidAbsoluteUrl(value: string): boolean {
   } catch {
     return false
   }
+}
+
+function getDefaultLogicalModelForUseCase(useCaseType: UseCaseType): string {
+  return useCaseType === 'text_generation' ? 'dyno-chat-1' : 'dyno-embeddings-1'
 }
 
 function mapProjectConfigRow(row: ProjectConfigRow): ProjectConfig {
@@ -119,6 +140,7 @@ function mapProjectConfigRow(row: ProjectConfigRow): ProjectConfig {
     upstream_api_key_last_updated_at: row.upstream_api_key_last_updated_at,
     battery_min_percent: row.battery_min_percent,
     idle_min_seconds: row.idle_min_seconds,
+    estimated_cloud_cost_per_request_usd: toNullableNumber(row.estimated_cloud_cost_per_request_usd),
     requires_charging: row.requires_charging,
     wifi_only: row.wifi_only,
     created_at: row.created_at,
@@ -164,6 +186,15 @@ function mapRequestExecutionRow(row: RequestExecutionRow): ProjectRequestExecuti
     error_type: row.error_type,
     error_code: row.error_code,
     request_id: row.request_id,
+    created_at: row.created_at,
+  }
+}
+
+function mapValueSummaryExecutionRow(row: ValueSummaryExecutionRow): ProjectValueSummaryExecution {
+  return {
+    project_id: row.project_id,
+    status: normalizeRequestExecutionStatus(row.status),
+    execution_path: normalizeRequestExecutionPath(row.execution_path),
     created_at: row.created_at,
   }
 }
@@ -254,6 +285,15 @@ export async function createProject(input: CreateProjectInput): Promise<Project>
     throw new Error('Failed to create project: RPC did not return a project id')
   }
 
+  const defaultLogicalModel = getDefaultLogicalModelForUseCase(input.useCaseType)
+  const { error: configUpdateError } = await supabase
+    .from('project_configs')
+    .update({ logical_model: defaultLogicalModel })
+    .eq('project_id', projectId)
+  if (configUpdateError) {
+    throw formatError('Failed to create project', configUpdateError.message)
+  }
+
   // Guardrail: ensure newly created projects always start as drafts.
   await updateProjectStatus(projectId, 'draft')
 
@@ -287,7 +327,7 @@ export async function getProjectConfig(projectId: string): Promise<ProjectConfig
   const { data, error } = await supabase
     .from('project_configs')
     .select(
-      'id, project_id, local_model, cloud_model, logical_model, upstream_provider_type, upstream_base_url, upstream_model, fallback_enabled, upstream_api_key_encrypted, upstream_api_key_last_updated_at, battery_min_percent, idle_min_seconds, requires_charging, wifi_only, created_at, updated_at',
+      'id, project_id, local_model, cloud_model, logical_model, upstream_provider_type, upstream_base_url, upstream_model, fallback_enabled, upstream_api_key_encrypted, upstream_api_key_last_updated_at, battery_min_percent, idle_min_seconds, estimated_cloud_cost_per_request_usd, requires_charging, wifi_only, created_at, updated_at',
     )
     .eq('project_id', projectId)
     .maybeSingle()
@@ -341,6 +381,32 @@ export async function listRecentProjectRequestExecutions(
   }
 
   return ((data as RequestExecutionRow[] | null) ?? []).map(mapRequestExecutionRow)
+}
+
+export async function listProjectValueSummaryExecutions(
+  projectId: string,
+  windowDays = 7,
+): Promise<ProjectValueSummaryExecution[]> {
+  const { supabase } = await getAuthedSupabase()
+  const effectiveWindowDays = Number.isFinite(windowDays) && windowDays > 0 ? Math.floor(windowDays) : 7
+  const windowStart = new Date(Date.now() - effectiveWindowDays * 24 * 60 * 60 * 1000).toISOString()
+  const { data, error } = await supabase
+    .from('request_executions')
+    .select('project_id, status, execution_path, created_at')
+    .eq('project_id', projectId)
+    .gte('created_at', windowStart)
+
+  if (error) {
+    if (
+      error.code === 'PGRST205' ||
+      error.message.includes("Could not find the table 'public.request_executions'")
+    ) {
+      return []
+    }
+    throw formatError('Failed to list value summary request executions', error.message)
+  }
+
+  return ((data as ValueSummaryExecutionRow[] | null) ?? []).map(mapValueSummaryExecutionRow)
 }
 
 export async function createProjectApiKey(
@@ -403,7 +469,7 @@ export async function updateProjectConfig(
   const { data: existingData, error: existingError } = await supabase
     .from('project_configs')
     .select(
-      'id, project_id, local_model, cloud_model, logical_model, upstream_provider_type, upstream_base_url, upstream_model, fallback_enabled, upstream_api_key_encrypted, upstream_api_key_last_updated_at, battery_min_percent, idle_min_seconds, requires_charging, wifi_only, created_at, updated_at',
+      'id, project_id, local_model, cloud_model, logical_model, upstream_provider_type, upstream_base_url, upstream_model, fallback_enabled, upstream_api_key_encrypted, upstream_api_key_last_updated_at, battery_min_percent, idle_min_seconds, estimated_cloud_cost_per_request_usd, requires_charging, wifi_only, created_at, updated_at',
     )
     .eq('project_id', projectId)
     .single()
@@ -434,6 +500,9 @@ export async function updateProjectConfig(
     payload.battery_min_percent = patch.battery_min_percent
   }
   if (patch.idle_min_seconds !== undefined) payload.idle_min_seconds = patch.idle_min_seconds
+  if (patch.estimated_cloud_cost_per_request_usd !== undefined) {
+    payload.estimated_cloud_cost_per_request_usd = patch.estimated_cloud_cost_per_request_usd
+  }
   if (patch.requires_charging !== undefined) {
     payload.requires_charging = patch.requires_charging
   }
@@ -455,6 +524,16 @@ export async function updateProjectConfig(
   }
   if (payload.upstream_model !== undefined && payload.upstream_model !== null && !payload.upstream_model) {
     throw new Error('Failed to update project config: upstream model cannot be empty')
+  }
+  if (
+    payload.estimated_cloud_cost_per_request_usd !== undefined &&
+    payload.estimated_cloud_cost_per_request_usd !== null &&
+    (!Number.isFinite(payload.estimated_cloud_cost_per_request_usd) ||
+      payload.estimated_cloud_cost_per_request_usd < 0)
+  ) {
+    throw new Error(
+      'Failed to update project config: estimated cloud cost per request must be a number greater than or equal to 0',
+    )
   }
 
   const plaintextApiKey = toNullableNonEmptyString(patch.upstream_api_key_plaintext)
@@ -504,7 +583,7 @@ export async function updateProjectConfig(
     .update(payload)
     .eq('project_id', projectId)
     .select(
-      'id, project_id, local_model, cloud_model, logical_model, upstream_provider_type, upstream_base_url, upstream_model, fallback_enabled, upstream_api_key_encrypted, upstream_api_key_last_updated_at, battery_min_percent, idle_min_seconds, requires_charging, wifi_only, created_at, updated_at',
+      'id, project_id, local_model, cloud_model, logical_model, upstream_provider_type, upstream_base_url, upstream_model, fallback_enabled, upstream_api_key_encrypted, upstream_api_key_last_updated_at, battery_min_percent, idle_min_seconds, estimated_cloud_cost_per_request_usd, requires_charging, wifi_only, created_at, updated_at',
     )
     .single()
 

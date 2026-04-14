@@ -147,7 +147,7 @@ export function CreateProjectDialog({
               {state.fieldErrors?.useCaseType ? (
                 <p className="text-[11px] text-destructive">{state.fieldErrors.useCaseType}</p>
               ) : (
-                <p className="text-[10px] text-muted-foreground/70">More use cases coming soon.</p>
+                <p className="text-[10px] text-muted-foreground/70">Choose embeddings or chat completions.</p>
               )}
             </div>
 

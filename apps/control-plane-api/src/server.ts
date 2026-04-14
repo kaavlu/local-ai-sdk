@@ -2,10 +2,17 @@ import http from 'node:http';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { ApiKeyAuthError, authenticateRequest } from './auth/api-key-auth.js';
 import type { AuthenticatedRequestContext } from './auth/api-key-auth.js';
+import { executeCloudChatCompletion } from './executors/cloud-chat.js';
 import { executeCloudEmbedding } from './executors/cloud-embedding.js';
 import { executeLocalEmbedding, probeLocalReadiness } from './executors/local-embedding.js';
 import { normalizeCloudEmbeddingResponse, normalizeLocalEmbeddingResponse } from './normalize/openai-embeddings.js';
-import type { OpenAiEmbeddingsRequest, OpenAiErrorResponse, OpenAiModelsResponse } from './openai-types.js';
+import type {
+  OpenAiChatCompletionsRequest,
+  OpenAiChatMessage,
+  OpenAiEmbeddingsRequest,
+  OpenAiErrorResponse,
+  OpenAiModelsResponse,
+} from './openai-types.js';
 import { ProjectContextError, resolveProjectContext } from './project-context.js';
 import type { ProjectContext } from './project-context.js';
 import {
@@ -13,9 +20,10 @@ import {
   type RequestExecutionPath,
 } from './persistence/request-executions.js';
 import { calculateLatencyMs, createRequestMetadata, deriveInputCount, type RequestMetadata } from './request-metadata.js';
-import { determineEmbeddingExecution } from './routing/embedding-decision.js';
+import { determineExecution } from './routing/execution-decision.js';
 
 export const DYNO_EMBEDDINGS_MODEL_ID = 'dyno-embeddings-1';
+export const DYNO_CHAT_MODEL_ID = 'dyno-chat-1';
 
 interface JsonResponse {
   status: number;
@@ -77,6 +85,34 @@ function normalizeInputs(input: unknown): string[] | null {
   return null;
 }
 
+function normalizeChatMessages(messages: unknown): OpenAiChatMessage[] | null {
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return null;
+  }
+  const normalized: OpenAiChatMessage[] = [];
+  for (const message of messages) {
+    if (typeof message !== 'object' || message == null || Array.isArray(message)) {
+      return null;
+    }
+    const maybeMessage = message as { role?: unknown; content?: unknown };
+    if (
+      maybeMessage.role !== 'system' &&
+      maybeMessage.role !== 'user' &&
+      maybeMessage.role !== 'assistant'
+    ) {
+      return null;
+    }
+    if (typeof maybeMessage.content !== 'string') {
+      return null;
+    }
+    normalized.push({
+      role: maybeMessage.role,
+      content: maybeMessage.content,
+    });
+  }
+  return normalized;
+}
+
 async function readJsonBody(req: IncomingMessage): Promise<unknown> {
   return await new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
@@ -103,6 +139,12 @@ function getModelsResponse(): OpenAiModelsResponse {
         created: 0,
         owned_by: 'dyno',
       },
+      {
+        id: DYNO_CHAT_MODEL_ID,
+        object: 'model',
+        created: 0,
+        owned_by: 'dyno',
+      },
     ],
   };
 }
@@ -116,6 +158,18 @@ function ensureCloudFallbackConfigured(context: Awaited<ReturnType<typeof resolv
       'fallback_disabled',
     );
   }
+  if (!context.upstreamBaseUrl || !context.upstreamApiKey || !context.upstreamModel) {
+    return openAiError(
+      502,
+      'Resolved project is missing upstream cloud configuration',
+      'invalid_request_error',
+      'upstream_not_configured',
+    );
+  }
+  return null;
+}
+
+function ensureCloudChatConfigured(context: Awaited<ReturnType<typeof resolveProjectContext>>): JsonResponse | null {
   if (!context.upstreamBaseUrl || !context.upstreamApiKey || !context.upstreamModel) {
     return openAiError(
       502,
@@ -217,7 +271,8 @@ export async function handleEmbeddingsRequest(
     }
 
     const readiness = await probeLocalReadiness(context.localMode);
-    const decision = determineEmbeddingExecution({
+    const decision = determineExecution({
+      useCase: 'embeddings',
       strategyPreset: context.strategyPreset,
       agentReachable: readiness.agentReachable,
       localReady: readiness.localReady,
@@ -312,6 +367,151 @@ export async function handleEmbeddingsRequest(
   }
 }
 
+export async function handleChatCompletionsRequest(
+  body: unknown,
+  headers: IncomingMessage['headers'],
+  metadata?: RequestMetadata,
+): Promise<JsonResponse> {
+  const requestMetadata = metadata ?? createRequestMetadata();
+  const finalize = (result: JsonResponse): JsonResponse => withRequestIdHeader(result, requestMetadata.requestId);
+
+  let authContext: AuthenticatedRequestContext | null = null;
+  let projectContext: ProjectContext | null = null;
+  let requestModel: string | null = null;
+  let messages: OpenAiChatMessage[] = [];
+  let executionPath: RequestExecutionPath | null = 'cloud';
+  let executionReason: string | null = 'local_not_supported';
+
+  const persistChatResult = async (result: JsonResponse, status: 'success' | 'error', reason: string | null) => {
+    if (!authContext?.projectId) {
+      return;
+    }
+
+    const errorMetadata = status === 'error' ? getOpenAiErrorMetadata(result.body) : { errorType: null, errorCode: null };
+    await recordRequestExecutionSafely(
+      {
+        projectId: authContext.projectId,
+        apiKeyId: authContext.apiKeyId,
+        endpoint: '/v1/chat/completions',
+        useCase: projectContext?.useCaseType ?? null,
+        logicalModel: requestModel ?? DYNO_CHAT_MODEL_ID,
+        executionPath,
+        executionReason: reason ?? executionReason,
+        status,
+        httpStatus: result.status,
+        latencyMs: calculateLatencyMs(requestMetadata.startedAtMs),
+        inputCount: messages.length,
+        errorType: errorMetadata.errorType,
+        errorCode: errorMetadata.errorCode,
+        requestId: requestMetadata.requestId,
+        upstreamModel: projectContext?.upstreamModel ?? null,
+      },
+      'chat',
+    );
+  };
+
+  const request = body as Partial<OpenAiChatCompletionsRequest>;
+  if (typeof request !== 'object' || request == null || Array.isArray(request)) {
+    return finalize(openAiError(400, 'Request body must be a JSON object', 'invalid_request_error', 'invalid_body'));
+  }
+  if (typeof request.model !== 'string' || !request.model.trim()) {
+    return finalize(openAiError(400, '"model" is required', 'invalid_request_error', 'invalid_model', 'model'));
+  }
+  requestModel = request.model.trim();
+  if (requestModel !== DYNO_CHAT_MODEL_ID) {
+    return finalize(
+      openAiError(
+        400,
+        `Model "${requestModel}" is not supported by Dyno Phase 3B chat`,
+        'invalid_request_error',
+        'model_not_supported',
+        'model',
+      ),
+    );
+  }
+  messages = normalizeChatMessages(request.messages) ?? [];
+  if (messages.length === 0) {
+    return finalize(
+      openAiError(
+        400,
+        '"messages" must be a non-empty array of { role, content } entries',
+        'invalid_request_error',
+        'invalid_messages',
+        'messages',
+      ),
+    );
+  }
+  if (request.stream === true) {
+    return finalize(
+      openAiError(400, 'Streaming chat completions are not supported yet', 'invalid_request_error', 'streaming_not_supported'),
+    );
+  }
+  if (request.temperature !== undefined && (typeof request.temperature !== 'number' || !Number.isFinite(request.temperature))) {
+    return finalize(openAiError(400, '"temperature" must be a number', 'invalid_request_error', 'invalid_temperature', 'temperature'));
+  }
+  if (
+    request.max_tokens !== undefined &&
+    (typeof request.max_tokens !== 'number' || !Number.isInteger(request.max_tokens) || request.max_tokens <= 0)
+  ) {
+    return finalize(openAiError(400, '"max_tokens" must be a positive integer', 'invalid_request_error', 'invalid_max_tokens', 'max_tokens'));
+  }
+  if (request.user !== undefined && typeof request.user !== 'string') {
+    return finalize(openAiError(400, '"user" must be a string', 'invalid_request_error', 'invalid_user', 'user'));
+  }
+
+  const upstreamRequest: OpenAiChatCompletionsRequest = {
+    ...(request as Record<string, unknown>),
+    model: requestModel,
+    messages,
+  };
+
+  try {
+    authContext = await authenticateRequest(headers);
+    const context = await resolveProjectContext(authContext.projectId);
+    projectContext = context;
+    const decision = determineExecution({
+      useCase: 'chat',
+      strategyPreset: context.strategyPreset,
+      agentReachable: false,
+      localReady: false,
+    });
+    executionPath = decision.execution;
+    executionReason = decision.reason;
+
+    const cloudConfigError = ensureCloudChatConfigured(context);
+    if (cloudConfigError) {
+      await persistChatResult(cloudConfigError, 'error', decision.reason);
+      return finalize(cloudConfigError);
+    }
+
+    const cloud = await executeCloudChatCompletion(context, upstreamRequest);
+    const result = {
+      status: 200,
+      headers: {
+        'X-Dyno-Execution': 'cloud',
+        'X-Dyno-Reason': decision.reason,
+      },
+      body: cloud,
+    };
+    void persistChatResult(result, 'success', decision.reason);
+    return finalize(result);
+  } catch (error) {
+    if (error instanceof ApiKeyAuthError) {
+      const result = openAiError(error.statusCode, error.message, 'authentication_error', error.code);
+      await persistChatResult(result, 'error', error.code);
+      return finalize(result);
+    }
+    if (error instanceof ProjectContextError) {
+      const result = openAiError(error.statusCode, error.message, 'invalid_request_error', error.code);
+      await persistChatResult(result, 'error', error.code);
+      return finalize(result);
+    }
+    const result = openAiError(502, 'Dyno failed to execute chat completion request', 'api_error', 'execution_failed');
+    await persistChatResult(result, 'error', executionReason ?? 'execution_failed');
+    return finalize(result);
+  }
+}
+
 async function handleModelsRequest(
   headers: IncomingMessage['headers'],
   metadata?: RequestMetadata,
@@ -380,6 +580,31 @@ export function createServer(): http.Server {
         try {
           const body = await readJsonBody(req);
           const result = await handleEmbeddingsRequest(body, req.headers, requestMetadata);
+          json(res, result.status, result.body, result.headers);
+        } catch (error) {
+          if (error instanceof SyntaxError) {
+            const result = withRequestIdHeader(
+              openAiError(400, 'Invalid JSON body', 'invalid_request_error', 'invalid_json'),
+              requestMetadata.requestId,
+            );
+            json(res, result.status, result.body, result.headers);
+            return;
+          }
+          const result = withRequestIdHeader(
+            openAiError(500, 'Internal server error', 'api_error', 'internal_error'),
+            requestMetadata.requestId,
+          );
+          json(res, result.status, result.body, result.headers);
+        }
+      })();
+      return;
+    }
+    if (req.method === 'POST' && pathname === '/v1/chat/completions') {
+      void (async () => {
+        const requestMetadata = createRequestMetadata();
+        try {
+          const body = await readJsonBody(req);
+          const result = await handleChatCompletionsRequest(body, req.headers, requestMetadata);
           json(res, result.status, result.body, result.headers);
         } catch (error) {
           if (error instanceof SyntaxError) {
