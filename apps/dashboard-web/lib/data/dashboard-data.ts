@@ -16,6 +16,7 @@ import type {
   UpdateProfileInput,
   UpdateProjectConfigInput,
   UpdateWorkspaceInput,
+  UseCaseType,
   Workspace,
 } from '@/lib/data/dashboard-types'
 import { generateApiKey, hashApiKey } from '@/lib/server/api-keys'
@@ -93,6 +94,9 @@ type ValueSummaryExecutionRow = {
   project_id: string
   status: string
   execution_path: string | null
+  execution_reason: string | null
+  error_type: string | null
+  error_code: string | null
   created_at: string
 }
 
@@ -195,6 +199,9 @@ function mapValueSummaryExecutionRow(row: ValueSummaryExecutionRow): ProjectValu
     project_id: row.project_id,
     status: normalizeRequestExecutionStatus(row.status),
     execution_path: normalizeRequestExecutionPath(row.execution_path),
+    execution_reason: row.execution_reason,
+    error_type: row.error_type,
+    error_code: row.error_code,
     created_at: row.created_at,
   }
 }
@@ -392,7 +399,7 @@ export async function listProjectValueSummaryExecutions(
   const windowStart = new Date(Date.now() - effectiveWindowDays * 24 * 60 * 60 * 1000).toISOString()
   const { data, error } = await supabase
     .from('request_executions')
-    .select('project_id, status, execution_path, created_at')
+    .select('project_id, status, execution_path, execution_reason, error_type, error_code, created_at')
     .eq('project_id', projectId)
     .gte('created_at', windowStart)
 

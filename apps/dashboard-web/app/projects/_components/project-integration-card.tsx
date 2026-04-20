@@ -8,6 +8,7 @@ import { ProjectSectionShell } from '@/app/projects/_components/project-detail-p
 import { cn } from '@/lib/utils'
 
 interface ProjectIntegrationCardProps {
+  sdkSnippet: string
   baseUrl: string
   openAiSnippet: string
   curlSnippet: string
@@ -15,7 +16,7 @@ interface ProjectIntegrationCardProps {
   className?: string
 }
 
-type CopyTarget = 'baseUrl' | 'openAiSnippet' | 'curlSnippet'
+type CopyTarget = 'sdkSnippet' | 'baseUrl' | 'openAiSnippet' | 'curlSnippet'
 type CodeLanguage = 'typescript' | 'shell'
 
 const TS_KEYWORDS = new Set([
@@ -102,6 +103,7 @@ function getTokenClass(token: string, language: CodeLanguage): string {
 }
 
 export function ProjectIntegrationCard({
+  sdkSnippet,
   baseUrl,
   openAiSnippet,
   curlSnippet,
@@ -127,15 +129,39 @@ export function ProjectIntegrationCard({
   return (
     <ProjectSectionShell
       title="Integration"
-      description="Primary path: @dyno/sdk-ts + local runtime. Below: optional OpenAI-compatible HTTP API (sandbox, demos, tooling) using a Dyno API key."
+      description="Primary path: @dyno/sdk-ts GA methods (`Dyno.init`, `embedText`/`embedTexts`, `getStatus`, `shutdown`) with local-first execution. Below: optional OpenAI-compatible HTTP API for sandbox, demos, and tooling."
       className={cn(className)}
     >
       <div className="space-y-3">
+        <div className="rounded-lg border border-border/45 bg-background/35">
+          <div className="flex items-center justify-between border-b border-border/45 px-3 py-2">
+            <p className="font-mono text-[10px] text-muted-foreground/80">TypeScript (@dyno/sdk-ts)</p>
+            <Button
+              type="button"
+              variant="outline"
+              className="h-6 rounded-md border-border/55 px-2 text-[10px]"
+              onClick={() => void handleCopy(sdkSnippet, 'sdkSnippet')}
+            >
+              {copiedTarget === 'sdkSnippet' ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+              <span className="ml-1">{copiedTarget === 'sdkSnippet' ? 'Copied' : 'Copy'}</span>
+            </Button>
+          </div>
+          {renderHighlightedCode(sdkSnippet, 'typescript')}
+        </div>
+
         <div className="rounded-lg border border-border/45 bg-background/30 px-3 py-2.5">
           <p className="text-[10px] uppercase tracking-wide text-muted-foreground/75">Authentication</p>
           <p className="mt-1 text-[11px] text-foreground/90">
-            Set DYNO_API_KEY to one of this project&apos;s Dyno API keys.
+            For the GA SDK path, set DYNO_PROJECT_API_KEY.
+            {' '}DYNO_API_KEY below is only for the optional hosted OpenAI-compatible snippets.
             {hasNoApiKeys ? ' No active keys exist yet, so requests will fail authentication until you create one.' : ''}
+          </p>
+        </div>
+
+        <div className="rounded-lg border border-border/45 bg-background/30 px-3 py-2.5">
+          <p className="text-[10px] uppercase tracking-wide text-muted-foreground/75">Optional hosted compatibility</p>
+          <p className="mt-1 text-[11px] text-foreground/90">
+            Use these OpenAI-compatible snippets only for sandbox, demos, or tooling compatibility checks.
           </p>
         </div>
 
@@ -159,7 +185,9 @@ export function ProjectIntegrationCard({
 
         <div className="rounded-lg border border-border/45 bg-background/35">
           <div className="flex items-center justify-between border-b border-border/45 px-3 py-2">
-            <p className="font-mono text-[10px] text-muted-foreground/80">TypeScript (OpenAI SDK)</p>
+            <p className="font-mono text-[10px] text-muted-foreground/80">
+              TypeScript (OpenAI SDK, optional)
+            </p>
             <Button
               type="button"
               variant="outline"
@@ -175,7 +203,7 @@ export function ProjectIntegrationCard({
 
         <div className="rounded-lg border border-border/45 bg-background/35">
           <div className="flex items-center justify-between border-b border-border/45 px-3 py-2">
-            <p className="font-mono text-[10px] text-muted-foreground/80">cURL</p>
+            <p className="font-mono text-[10px] text-muted-foreground/80">cURL (optional)</p>
             <Button
               type="button"
               variant="outline"
@@ -190,7 +218,7 @@ export function ProjectIntegrationCard({
         </div>
 
         <p className="text-[10px] text-muted-foreground/72">
-          Local vs cloud execution is decided in the SDK/runtime on the user’s device. This OpenAI-compatible endpoint is a secondary hosted surface, not the default integration architecture.
+          Local vs cloud execution is decided in the SDK/runtime on the user&apos;s device. Low-level runtime client calls are advanced/internal; the default contract is the GA SDK surface shown above.
         </p>
       </div>
     </ProjectSectionShell>

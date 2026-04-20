@@ -69,9 +69,9 @@
 
 ## Completion criteria
 
-- [ ] `apps/control-plane-api/package.json` description and root README section state **secondary** role per AGENTS.md §12.
-- [ ] Explicit **non-goals** or maintenance policy for proxy lane recorded (markdown only acceptable).
-- [ ] No new proxy features added in this stage unless required to fix incorrect/misleading behavior.
+- [x] `apps/control-plane-api/package.json` description and root README section state **secondary** role per AGENTS.md §12.
+- [x] Explicit **non-goals** or maintenance policy for proxy lane recorded (markdown only acceptable).
+- [x] No new proxy features added in this stage unless required to fix incorrect/misleading behavior.
 
 ## Out of scope
 
@@ -82,4 +82,22 @@
 
 ## Status
 
-**pending**
+**completed**
+
+## Implementation notes
+
+- Updated [README.md](../../../README.md) `apps/control-plane-api` section to reinforce SDK/runtime-first ordering and proxy-secondary positioning.
+- Added explicit operator model notes: control-plane proxy runs on developer/server infrastructure; end-user integrations remain SDK + local runtime.
+- Added proxy telemetry wording to avoid over-claiming dashboard metrics as full local-first ground truth.
+- Added explicit secondary-lane maintenance policy and non-goals (no proxy-first feature expansion; compatibility/correctness/reliability fixes only; route removals require deprecation path).
+- Confirmed [apps/control-plane-api/package.json](../../../apps/control-plane-api/package.json) already has the intended secondary-lane description; no additional change needed.
+
+## Validation run
+
+- Ran `npm run test:control-plane` from repo root.
+- Result: pass (`25/25` tests).
+
+## Follow-up tasks discovered
+
+- Optional: add a dedicated `apps/control-plane-api/README.md` that mirrors the root guidance for operators who land directly in that workspace.
+- Optional: if pricing copy still references "all routed traffic," align wording to "hosted proxy traffic" in dashboard/product copy to stay consistent with directional telemetry framing.

@@ -13,6 +13,7 @@ import type {
   MachineStateDebugRecord,
   MachineStateInput,
   ModelDebugInfo,
+  ReadinessDebugResponse,
   WaitForJobCompletionOptions,
   WorkerDebugInfo,
 } from './types.js';
@@ -48,6 +49,11 @@ export class DynoSdk {
 
   async healthCheck(): Promise<HealthResponse> {
     return this.requestJson<HealthResponse>('GET', '/health');
+  }
+
+  /** `GET /debug/readiness` — machine readiness gates used by SDK preflight probes. */
+  async getReadinessDebug(): Promise<ReadinessDebugResponse> {
+    return this.requestJson<ReadinessDebugResponse>('GET', '/debug/readiness');
   }
 
   async createJob(request: CreateJobRequest): Promise<CreateJobResponse> {

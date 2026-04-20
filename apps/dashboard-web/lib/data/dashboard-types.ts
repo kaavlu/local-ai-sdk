@@ -136,5 +136,8 @@ export interface ProjectValueSummaryExecution {
   project_id: string
   status: RequestExecutionStatus
   execution_path: RequestExecutionPath | null
+  execution_reason: string | null
+  error_type: string | null
+  error_code: string | null
   created_at: string
 }

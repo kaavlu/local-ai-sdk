@@ -2,6 +2,8 @@
 export interface DynoSdkOptions {
   /**
    * Base URL of the Dyno agent HTTP API (no trailing slash).
+   * Advanced override for custom runtime wiring; typical app integrations should
+   * rely on `Dyno.init()` managed lifecycle and internal endpoint resolution.
    * @default "http://127.0.0.1:8787"
    */
   baseUrl?: string;
@@ -138,8 +140,97 @@ export type MachineStateDebugRecord =
     };
 
 /** GET /health response. */
+export type RuntimeLifecycleState =
+  | 'unreachable'
+  | 'healthy_unready'
+  | 'ready'
+  | 'executing'
+  | 'completed'
+  | 'failed'
+  | 'timed_out';
+
+export interface RuntimeCapabilities {
+  readinessDebugV1?: boolean;
+  readinessDetailsV1?: boolean;
+}
+
+export interface RuntimeContractInfo {
+  agentVersion?: string;
+  contractVersion?: string;
+  lifecycleStates?: RuntimeLifecycleState[];
+  capabilities?: RuntimeCapabilities;
+}
+
 export interface HealthResponse {
   ok: boolean;
+  runtime?: RuntimeContractInfo;
+}
+
+/** GET /debug/readiness response (fields used by SDK preflight guardrails). */
+export interface ReadinessDebugResponse {
+  ok: boolean;
+  interactiveLocalReady: boolean;
+  backgroundLocalReady: boolean;
+  conservativeLocalReady: boolean;
+  readinessBypass?: boolean;
+  readiness?: {
+    modes?: Partial<
+      Record<
+        LocalMode,
+        {
+          isReady?: boolean;
+          localMode?: string;
+          blockingReasons?: string[];
+          warnings?: string[];
+        }
+      >
+    >;
+  };
+}
+
+export type RuntimeManagerState =
+  | 'idle'
+  | 'starting'
+  | 'healthy'
+  | 'ready'
+  | 'degraded'
+  | 'unavailable';
+
+export interface RuntimeManagerStatus {
+  state: RuntimeManagerState;
+  lastError: string | null;
+  lastCheckedAt: number | null;
+  startedAt: number | null;
+  healthy: boolean;
+  ready: boolean;
+}
+
+export interface RuntimeManagerStartOptions {
+  timeoutMs?: number;
+}
+
+export interface RuntimeManagerWaitOptions {
+  timeoutMs?: number;
+  pollIntervalMs?: number;
+}
+
+export interface RuntimeManagerReadyOptions extends RuntimeManagerWaitOptions {
+  /**
+   * If true, keeps polling readiness until mode is ready or timeout.
+   * If false, a single readiness probe is attempted.
+   * @default true
+   */
+  waitForReady?: boolean;
+}
+
+export interface RuntimeManager {
+  ensureStarted(options?: RuntimeManagerStartOptions): Promise<void>;
+  waitUntilHealthy(options?: RuntimeManagerWaitOptions): Promise<HealthResponse>;
+  waitUntilReady(
+    localMode: LocalMode,
+    options?: RuntimeManagerReadyOptions,
+  ): Promise<ReadinessDebugResponse | null>;
+  getStatus(): RuntimeManagerStatus;
 }
 
 /** GET /debug/profile row (same shape as agent `device_profile`). */

@@ -9,6 +9,7 @@ import type {
 } from '@/lib/data/dashboard-types'
 import {
   DEFAULT_ESTIMATED_CLOUD_COST_PER_REQUEST_USD,
+  buildProjectOperationalSignals,
   buildProjectPageViewModel,
   buildProjectValueSummary,
 } from '@/lib/data/project-page-view-model'
@@ -96,6 +97,9 @@ function toValueSummaryExecution(
     project_id: request.project_id,
     status: request.status,
     execution_path: request.execution_path,
+    execution_reason: request.execution_reason,
+    error_type: request.error_type,
+    error_code: request.error_code,
     created_at: request.created_at,
     ...overrides,
   }
@@ -146,6 +150,14 @@ test('integration snippet reflects logical model', () => {
 
   assert.match(result.integration.openAiSnippet, /model: 'dyno-embeddings-custom'/)
   assert.match(result.integration.curlSnippet, /"model":"dyno-embeddings-custom"/)
+  assert.match(result.integration.sdkSnippet, /Dyno\.init\(\{/)
+  assert.match(result.integration.sdkSnippet, /Project: 'proj_12345678'/)
+  assert.match(result.integration.sdkSnippet, /dyno\.embedText\('hello world'\)/)
+  assert.match(result.integration.sdkSnippet, /dyno\.getStatus\(\)/)
+  assert.match(result.integration.sdkSnippet, /dyno\.shutdown\(\)/)
+  assert.doesNotMatch(result.integration.sdkSnippet, /dyno\.sdk\.createJob/)
+  assert.doesNotMatch(result.integration.sdkSnippet, /Runtime Manager|runtime manager|startup hooks/)
+  assert.match(result.integration.openAiSnippet, /Optional hosted OpenAI-compatible API/)
 })
 
 test('text generation projects default to chat logical model and chat snippets', () => {
@@ -160,6 +172,8 @@ test('text generation projects default to chat logical model and chat snippets',
   })
 
   assert.equal(result.integration.logicalModel, 'dyno-chat-1')
+  assert.match(result.integration.sdkSnippet, /dyno\.embedText\('hello world'\)/)
+  assert.doesNotMatch(result.integration.sdkSnippet, /dyno\.sdk\.createJob/)
   assert.match(result.integration.openAiSnippet, /client\.chat\.completions\.create/)
   assert.match(result.integration.curlSnippet, /\/chat\/completions/)
 })
@@ -329,4 +343,123 @@ test('value summary only counts executions from the current project', () => {
   assert.equal(summary.totalRequests, 1)
   assert.equal(summary.localRequests, 1)
   assert.equal(summary.cloudRequests, 0)
+})
+
+test('operational signals provide zero-state defaults for sparse telemetry', () => {
+  const signals = buildProjectOperationalSignals({
+    projectId: 'proj_12345678',
+    executions: [],
+    windowDays: 7,
+  })
+
+  assert.equal(signals.localHitRate, 0)
+  assert.equal(signals.localHitRateSampleSize, 0)
+  assert.equal(signals.confidence.level, 'low')
+  assert.equal(signals.fallbackReasonBuckets.length, 0)
+  assert.equal(signals.reliabilityTrend.length, 7)
+  assert.equal(signals.reliabilitySummary.direction, 'insufficient_data')
+})
+
+test('operational signals map fallback reasons into stable buckets', () => {
+  const executions: ProjectValueSummaryExecution[] = [
+    toValueSummaryExecution(createRequest({ execution_path: 'cloud', execution_reason: 'policy_cloud_first' })),
+    toValueSummaryExecution(createRequest({ execution_path: 'cloud', execution_reason: 'runtime_unavailable' })),
+    toValueSummaryExecution(
+      createRequest({ execution_path: 'cloud', execution_reason: 'runtime_unavailable', status: 'error' }),
+    ),
+    toValueSummaryExecution(
+      createRequest({ execution_path: 'cloud', execution_reason: 'sdk_timeout', status: 'error' }),
+    ),
+  ]
+  const signals = buildProjectOperationalSignals({
+    projectId: 'proj_12345678',
+    executions,
+    windowDays: 7,
+  })
+
+  assert.equal(signals.fallbackReasonBuckets.length >= 3, true)
+  assert.equal(signals.fallbackReasonBuckets[0]?.key, 'local_runtime_unavailable')
+  assert.equal(signals.fallbackReasonBuckets[0]?.count, 2)
+  assert.equal(
+    signals.fallbackReasonBuckets.some((bucket) => bucket.key === 'policy_routed_to_cloud'),
+    true,
+  )
+  assert.equal(
+    signals.fallbackReasonBuckets.some((bucket) => bucket.key === 'local_timeout_fallback'),
+    true,
+  )
+})
+
+test('operational signals compute reliability trend direction from daily error rate', () => {
+  const now = new Date()
+  const day = (offset: number) => {
+    const date = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - offset))
+    return date.toISOString()
+  }
+  const executions: ProjectValueSummaryExecution[] = [
+    toValueSummaryExecution(createRequest({ created_at: day(1), status: 'success', execution_path: 'local' })),
+    toValueSummaryExecution(createRequest({ created_at: day(1), status: 'success', execution_path: 'cloud' })),
+    toValueSummaryExecution(createRequest({ created_at: day(0), status: 'error', execution_path: 'local' })),
+    toValueSummaryExecution(
+      createRequest({
+        created_at: day(0),
+        status: 'error',
+        execution_path: 'cloud',
+        error_code: 'timeout',
+        execution_reason: 'runtime_timeout',
+      }),
+    ),
+  ]
+  const signals = buildProjectOperationalSignals({
+    projectId: 'proj_12345678',
+    executions,
+    windowDays: 7,
+  })
+
+  assert.equal(signals.reliabilitySummary.direction, 'degrading')
+  const latest = signals.reliabilityTrend.at(-1)
+  assert.equal(latest?.errorCount, 2)
+  assert.equal(latest?.timeoutCount, 1)
+})
+
+test('pilot proof-pack exports align with computed KPI telemetry and caveats', () => {
+  const now = new Date()
+  const day = (offset: number) => {
+    const date = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - offset))
+    return date.toISOString()
+  }
+  const executions: ProjectValueSummaryExecution[] = [
+    toValueSummaryExecution(createRequest({ created_at: day(2), status: 'success', execution_path: 'local' })),
+    toValueSummaryExecution(createRequest({ created_at: day(1), status: 'success', execution_path: 'cloud', execution_reason: 'policy_cloud_first' })),
+    toValueSummaryExecution(
+      createRequest({
+        created_at: day(0),
+        status: 'error',
+        execution_path: 'cloud',
+        execution_reason: 'runtime_timeout',
+        error_code: 'timeout',
+      }),
+    ),
+  ]
+  const result = buildProjectPageViewModel({
+    project: createProject(),
+    config: createConfig({ estimated_cloud_cost_per_request_usd: 0.2 }),
+    apiKeys: [createApiKey()],
+    recentRequests: [],
+    valueSummaryExecutions: executions,
+  })
+
+  assert.equal(result.pilotProofPack.kpis.schemaVersion, 'pilot-kpi-v1')
+  assert.equal(result.pilotProofPack.kpis.localHitRate, result.operationalSignals.localHitRate)
+  assert.equal(
+    result.pilotProofPack.kpis.fallbackReasonBuckets[0]?.key,
+    result.operationalSignals.fallbackReasonBuckets[0]?.key,
+  )
+  assert.equal(
+    result.pilotProofPack.kpis.reliabilitySummary.direction,
+    result.operationalSignals.reliabilitySummary.direction,
+  )
+  assert.match(result.pilotProofPack.exports.markdown, /Directional signals from best-effort telemetry/)
+  assert.match(result.pilotProofPack.exports.csv, /directional_caveat/)
+  assert.match(result.pilotProofPack.exports.json, /"schemaVersion": "pilot-kpi-v1"/)
 })

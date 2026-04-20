@@ -76,11 +76,11 @@ Today `apps/control-plane-api` resolves project config via `GET {DYNO_CONFIG_RES
 
 ## Completion criteria
 
-- [ ] Product-named config (and auth resolve) routes exist on `dashboard-web` **or** documented alternative host, with shared logic with legacy `/api/demo/*` where applicable.
-- [ ] `apps/control-plane-api` uses configurable paths not hardcoded to `/api/demo/...` only.
-- [ ] `packages/sdk-ts` uses the product config HTTP surface for the primary integration path.
-- [ ] Telemetry ingestion path exists for SDK-emitted events, best-effort, aligned with §10.
-- [ ] `/api/demo/*` is explicitly **legacy/shim**, not the only supported name.
+- [x] Product-named config (and auth resolve) routes exist on `dashboard-web` **or** documented alternative host, with shared logic with legacy `/api/demo/*` where applicable.
+- [x] `apps/control-plane-api` uses configurable paths not hardcoded to `/api/demo/...` only.
+- [x] `packages/sdk-ts` uses the product config HTTP surface for the primary integration path.
+- [x] Telemetry ingestion path exists for SDK-emitted events, best-effort, aligned with §10.
+- [x] `/api/demo/*` is explicitly **legacy/shim**, not the only supported name.
 
 ## Out of scope
 
@@ -91,4 +91,27 @@ Today `apps/control-plane-api` resolves project config via `GET {DYNO_CONFIG_RES
 
 ## Status
 
-**pending**
+**completed** (2026-04-15)
+
+## Implementation notes
+
+- Added product resolver routes on dashboard-web:
+  - `GET /api/v1/project-config/[projectId]`
+  - `POST /api/v1/auth/resolve-api-key`
+- Kept `/api/demo/*` routes as explicit legacy shims with shared handler modules.
+- Shared resolver secret handling now supports:
+  - `DYNO_CONFIG_RESOLVER_SECRET` (preferred) with fallback to `DYNO_DEMO_CONFIG_RESOLVER_SECRET`
+  - `DYNO_CONFIG_RESOLVER_SECRET_HEADER` defaulting to `x-dyno-control-plane-secret`
+  - legacy `x-dyno-demo-secret` request header still accepted for migration safety.
+- `control-plane-api` resolver URLs are now path-configurable:
+  - `DYNO_CONFIG_RESOLVER_AUTH_PATH` (default `/api/v1/auth/resolve-api-key`)
+  - `DYNO_CONFIG_RESOLVER_PROJECT_CONFIG_PATH` (default `/api/v1/project-config`)
+- Added best-effort telemetry ingest endpoint:
+  - `POST /telemetry/events` in `apps/control-plane-api`
+  - accepts single event, array, or `{ events: [] }`
+  - maps SDK telemetry fields to existing `request_executions` persistence shape.
+- SDK additions:
+  - `HttpProjectConfigProvider` (primary HTTP resolver provider)
+  - `HttpDemoConfigProvider` kept as deprecated alias
+  - `createHttpTelemetrySink()` for best-effort POST telemetry transport.
+- Updated README with product routes, path override env vars, and legacy compatibility notes.

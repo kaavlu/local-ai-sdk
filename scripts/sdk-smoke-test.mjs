@@ -1,5 +1,5 @@
 /**
- * Quick SDK smoke test against a running agent (read-only GETs).
+ * Quick SDK smoke test against a reachable local runtime endpoint (read-only GETs).
  * Requires: npm run build -w @dyno/sdk-ts
  *
  * DYNO_AGENT_URL=http://127.0.0.1:9000 — full base URL (legacy LOCAL_AGENT_URL still honored)
@@ -58,7 +58,7 @@ function printHintIfUnreachable(err) {
   const msg = err instanceof Error ? err.message : String(err);
   if (/fetch failed|ECONNREFUSED|ENOTFOUND|network/i.test(msg)) {
     console.error(
-      '[smoke] hint: nothing responded at the base URL. Start the agent in another terminal: npm run dev:agent',
+      '[smoke] hint: nothing responded at the base URL. Start the demo app (runtime manager autostarts agent) or run legacy manual mode: npm run dev:agent',
     );
     console.error(
       '[smoke] hint: if the agent uses another port, set PORT or DYNO_AGENT_URL (see README Developer workflow).',

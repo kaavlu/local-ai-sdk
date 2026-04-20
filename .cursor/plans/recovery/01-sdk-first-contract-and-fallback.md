@@ -81,10 +81,10 @@ Establish **`@dyno/sdk-ts` as the primary developer integration surface** for th
 
 ## Completion criteria
 
-- [ ] Primary SDK API is **specified and implemented** in `packages/sdk-ts` for at least **embeddings** (or the single chosen vertical slice), including developer-owned fallback and optional config/telemetry interfaces.
-- [ ] `DynoSdk` remains available for advanced/job-level control **or** is clearly wrapped by the new API without duplicating conflicting semantics.
-- [ ] Demo-specific modules are no longer the documented default path for new integrations.
-- [ ] Alignment with [AGENTS.md](../../../AGENTS.md) §2, §5.2, §6, §8–9 is explicit in package docs.
+- [x] Primary SDK API is **specified and implemented** in `packages/sdk-ts` for at least **embeddings** (or the single chosen vertical slice), including developer-owned fallback and optional config/telemetry interfaces.
+- [x] `DynoSdk` remains available for advanced/job-level control **or** is clearly wrapped by the new API without duplicating conflicting semantics.
+- [x] Demo-specific modules are no longer the documented default path for new integrations.
+- [x] Alignment with [AGENTS.md](../../../AGENTS.md) §2, §5.2, §6, §8–9 is explicit in package docs.
 
 ## Out of scope
 
@@ -96,4 +96,40 @@ Establish **`@dyno/sdk-ts` as the primary developer integration surface** for th
 
 ## Status
 
-**pending**
+**completed** (2026-04-15)
+
+## Implementation notes (2026-04-15)
+
+- Added a new primary SDK orchestration surface for one vertical slice (embeddings):
+  - `DynoEmbeddingsRuntime` in `packages/sdk-ts/src/embeddings-runtime.ts`
+  - explicit developer-owned `cloudFallback` adapter
+  - execution output includes `decision` (`local` | `cloud`) and `reason`
+- Added best-effort telemetry hooks:
+  - `TelemetrySink` callback signature
+  - fire-and-forget event emission (`embeddings_execution`) so telemetry never blocks inference
+- Introduced a primary config contract:
+  - `ProjectConfig` and `ProjectConfigProvider` in `packages/sdk-ts/src/config-provider.ts`
+  - preserves dashboard-aligned `strategy_preset` values (`local_first` | `balanced` | `cloud_first`)
+  - keeps legacy demo names as deprecated type aliases for compatibility
+- Implemented minimal caching semantics aligned to AGENTS.md §9:
+  - `CachedProjectConfigProvider` with TTL + last-known-good fallback on provider errors
+- Demoted demo helpers in export/docs order without breakage:
+  - new `@dyno/sdk-ts/demo` subpath (`packages/sdk-ts/src/demo.ts`, `packages/sdk-ts/package.json`)
+  - root export still re-exports demo APIs during transition
+  - root `README.md` now documents primary runtime API first
+
+## Validation run
+
+- `npm run typecheck -w @dyno/sdk-ts` ✅
+- IDE lints for changed files (`packages/sdk-ts/src/*`, `README.md`, this stage file) ✅
+
+## Follow-up tasks discovered
+
+- Add a small SDK usage example snippet for `DynoEmbeddingsRuntime` (constructor + `cloudFallback`) in docs.
+- Add unit tests for:
+  - cache TTL behavior and stale fallback path
+  - fallback-disabled behavior when local execution fails
+  - telemetry sink non-blocking guarantees
+- Consider stage-2/3 refinements:
+  - richer reason taxonomy (e.g. readiness vs timeout vs agent unavailable)
+  - batch embeddings API shape (`embedTexts`) with mixed local/cloud accounting.

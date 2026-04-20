@@ -1,6 +1,9 @@
 export type StrategyPreset = 'local_first' | 'balanced' | 'cloud_first';
 export type LocalMode = 'interactive' | 'background';
 
+const DEFAULT_RESOLVER_PATH = '/api/v1/sdk/config';
+const DEFAULT_RESOLVER_TIMEOUT_MS = 8_000;
+
 interface ResolverResponse {
   projectId: string;
   use_case_type: string;
@@ -43,13 +46,17 @@ export interface ProjectContext {
 }
 
 export class ProjectContextError extends Error {
+  public readonly projectId: string | null;
+
   constructor(
     message: string,
     public readonly statusCode: number,
     public readonly code: string,
+    options: { projectId?: string | null } = {},
   ) {
     super(message);
     this.name = 'ProjectContextError';
+    this.projectId = options.projectId ?? null;
   }
 }
 
@@ -81,15 +88,42 @@ function readResolverBaseUrl(): string {
   return resolverBaseUrl.replace(/\/+$/, '');
 }
 
+function readProjectConfigResolverPath(): string {
+  const configuredPath =
+    nonEmptyString(process.env.DYNO_CONFIG_RESOLVER_CONFIG_PATH) ??
+    nonEmptyString(process.env.DYNO_SDK_CONFIG_PATH) ??
+    DEFAULT_RESOLVER_PATH;
+  return configuredPath.startsWith('/') ? configuredPath : `/${configuredPath}`;
+}
+
+function readResolverTimeoutMs(): number {
+  const parsed = Number(process.env.DYNO_CONFIG_RESOLVER_TIMEOUT_MS);
+  if (!Number.isFinite(parsed)) {
+    return DEFAULT_RESOLVER_TIMEOUT_MS;
+  }
+  return Math.max(200, Math.trunc(parsed));
+}
+
 export function getResolverAuthHeaders(): Record<string, string> {
   const resolverSecret = nonEmptyString(process.env.DYNO_CONFIG_RESOLVER_SECRET);
   const resolverHeaderName =
-    nonEmptyString(process.env.DYNO_CONFIG_RESOLVER_SECRET_HEADER) ?? 'x-dyno-demo-secret';
+    nonEmptyString(process.env.DYNO_CONFIG_RESOLVER_SECRET_HEADER) ?? 'x-dyno-control-plane-secret';
   if (!resolverSecret) {
     return {};
   }
   return {
     [resolverHeaderName]: resolverSecret,
+  };
+}
+
+function getResolverBearerHeaders(projectApiKey: string): Record<string, string> {
+  const normalizedKey = nonEmptyString(projectApiKey);
+  if (!normalizedKey) {
+    throw new ProjectContextError('projectApiKey is required', 401, 'missing_api_key');
+  }
+  return {
+    Authorization: `Bearer ${normalizedKey}`,
+    ...getResolverAuthHeaders(),
   };
 }
 
@@ -137,33 +171,87 @@ function normalizeResolverBody(raw: unknown): ResolverResponse {
   };
 }
 
-export async function resolveProjectContext(projectId: string): Promise<ProjectContext> {
-  const normalizedProjectId = nonEmptyString(projectId);
-  if (!normalizedProjectId) {
-    throw new ProjectContextError('projectId is required', 400, 'missing_project_id');
-  }
-  const resolverBaseUrl = readResolverBaseUrl();
-  const url = `${resolverBaseUrl}/api/demo/project-config/${encodeURIComponent(normalizedProjectId)}`;
-  const requestHeaders = getResolverAuthHeaders();
-
-  let response: Response;
+async function fetchResolverResponse(
+  resolverUrl: string,
+  requestHeaders: Record<string, string>,
+  timeoutMs: number,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    response = await fetch(url, { method: 'GET', headers: requestHeaders });
+    return await fetch(resolverUrl, {
+      method: 'GET',
+      headers: requestHeaders,
+      signal: controller.signal,
+    });
   } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new ProjectContextError(
+        `Project config resolver timed out after ${timeoutMs}ms`,
+        504,
+        'resolver_timeout',
+      );
+    }
     const message = error instanceof Error ? error.message : String(error);
     throw new ProjectContextError(
       `Failed to resolve project config: ${message}`,
       502,
       'resolver_unreachable',
     );
+  } finally {
+    clearTimeout(timeout);
   }
+}
+
+export interface ResolveProjectContextOptions {
+  requireCloudConfig?: boolean;
+}
+
+export async function resolveProjectContext(
+  projectApiKey: string,
+  options: ResolveProjectContextOptions = {},
+): Promise<ProjectContext> {
+  const resolverBaseUrl = readResolverBaseUrl();
+  const projectConfigPath = readProjectConfigResolverPath();
+  const requestHeaders = getResolverBearerHeaders(projectApiKey);
+  const url = `${resolverBaseUrl}${projectConfigPath}`;
+  const timeoutMs = readResolverTimeoutMs();
+
+  let response: Response;
+  response = await fetchResolverResponse(url, requestHeaders, timeoutMs);
 
   const text = await response.text();
   if (!response.ok) {
+    let parsedCode = '';
+    if (text) {
+      try {
+        const body = JSON.parse(text) as { code?: unknown };
+        parsedCode = typeof body.code === 'string' ? body.code : '';
+      } catch {
+        parsedCode = '';
+      }
+    }
+
+    if (response.status === 401 && parsedCode === 'revoked_api_key') {
+      throw new ProjectContextError('Project API key has been revoked', 401, 'revoked_api_key');
+    }
+    if (response.status === 401) {
+      throw new ProjectContextError('Invalid project API key', 401, 'invalid_api_key');
+    }
+    if (response.status === 404) {
+      throw new ProjectContextError('Project config not found', 404, 'project_config_not_found');
+    }
+    if (response.status >= 500) {
+      throw new ProjectContextError(
+        `Project config resolver returned ${response.status}`,
+        502,
+        'resolver_internal_error',
+      );
+    }
     throw new ProjectContextError(
       `Project config resolver returned ${response.status}`,
-      response.status === 404 ? 404 : 502,
-      response.status === 404 ? 'project_not_found' : 'resolver_error',
+      502,
+      'resolver_error',
     );
   }
 
@@ -191,16 +279,18 @@ export async function resolveProjectContext(projectId: string): Promise<ProjectC
     nonEmptyString(body.cloud_model) ??
     nonEmptyString(process.env.DYNO_UPSTREAM_MODEL);
 
-  if (fallbackEnabled && (!upstreamBaseUrl || !upstreamApiKey || !upstreamModel)) {
+  const requireCloudConfig = options.requireCloudConfig ?? true;
+  if (requireCloudConfig && fallbackEnabled && (!upstreamBaseUrl || !upstreamApiKey || !upstreamModel)) {
     throw new ProjectContextError(
       'Resolved project is missing upstream cloud configuration',
       502,
       'upstream_not_configured',
+      { projectId: body.projectId },
     );
   }
 
   return {
-    projectId: normalizedProjectId,
+    projectId: body.projectId,
     useCaseType: body.use_case_type,
     strategyPreset,
     logicalModel,

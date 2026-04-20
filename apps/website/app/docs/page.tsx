@@ -9,26 +9,42 @@ const sdkInstallCode = `npm install @dyno/sdk-ts`
 
 const optionalOpenAiInstallCode = `npm install openai`
 
-const directSdkCode = `import { DynoSdk } from "@dyno/sdk-ts"
+const directSdkCode = `import OpenAI from "openai"
+import { Dyno } from "@dyno/sdk-ts"
 
-const sdk = new DynoSdk()
-
-const job = await sdk.createJob({
-  taskType: "embed_text",
-  payload: { text: "Hello, world!" },
-  executionPolicy: "cloud_allowed",
-  localMode: "interactive",
+const provider = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY!,
 })
 
-const done = await sdk.waitForJobCompletion(job.id)
-const result = await sdk.getJobResult(job.id)`
+const dyno = await Dyno.init({
+  projectApiKey: process.env.DYNO_PROJECT_API_KEY!,
+  fallback: {
+    adapter: async ({ text }) => {
+      const response = await provider.embeddings.create({
+        model: "text-embedding-3-small",
+        input: text,
+      })
+      return { embedding: response.data[0]!.embedding }
+    },
+  },
+})
+
+const result = await dyno.embedText("Hello, world!")
+console.log(result.decision, result.reason)
+
+const status = await dyno.getStatus()
+console.log(status.runtime.ready, status.runtime.runtimeSource)
+
+// Optional but recommended on shutdown:
+await dyno.shutdown()`
 
 const optionalOpenAiUsageCode = `import OpenAI from "openai"
 
 // Optional: point the OpenAI SDK at the hosted OpenAI-compatible API (sandbox, demos, tooling).
+// In dashboard snippets this base URL comes from NEXT_PUBLIC_DYNO_BASE_URL.
 const dyno = new OpenAI({
   apiKey: process.env.DYNO_API_KEY,
-  baseURL: "http://127.0.0.1:8788/v1",
+  baseURL: process.env.DYNO_OPENAI_BASE_URL ?? "http://127.0.0.1:8788/v1",
 })
 
 const res = await dyno.embeddings.create({
@@ -43,7 +59,7 @@ const sections = [
     icon: Rocket,
     title: 'Quickstart',
     description:
-      'Install @dyno/sdk-ts, connect the local runtime, and run your first job—the default integration path.',
+      'Install @dyno/sdk-ts, initialize Dyno once, and run your first local-first request.',
     href: '#quickstart',
   },
   {
@@ -152,16 +168,16 @@ export default function DocsPage() {
                 >
                   Dyno dashboard
                 </Link>
-                , create a project, and generate a <code className="rounded bg-card px-1.5 py-0.5 text-xs text-foreground-secondary">DYNO_API_KEY</code>.
+                , create a project, and generate a <code className="rounded bg-card px-1.5 py-0.5 text-xs text-foreground-secondary">DYNO_PROJECT_API_KEY</code>. Keep fallback provider credentials in your app (for example <code className="rounded bg-card px-1.5 py-0.5 text-xs text-foreground-secondary">OPENAI_API_KEY</code>) and wire them through <code className="rounded bg-card px-1.5 py-0.5 text-xs text-foreground-secondary">fallback.adapter</code>.
               </p>
             </div>
 
             <div>
               <h3 className="text-base font-semibold text-foreground">
-                3. Run a job via the SDK (default path)
+                3. Run an embedding via the SDK GA surface
               </h3>
               <p className="mt-2 mb-3 text-sm text-foreground-secondary">
-                With the local runtime running, create a job and wait for the result. Local vs cloud is decided on-device per policy—not by routing every request through the hosted control plane.
+                Runtime lifecycle is managed internally by Dyno. The default fallback contract is adapter-first (<code className="rounded bg-card px-1.5 py-0.5 text-xs text-foreground-secondary">fallback.adapter</code>) so credentials stay app-owned. The stable GA surface remains <code className="rounded bg-card px-1.5 py-0.5 text-xs text-foreground-secondary">Dyno.init</code>, <code className="rounded bg-card px-1.5 py-0.5 text-xs text-foreground-secondary">embedText/embedTexts</code>, <code className="rounded bg-card px-1.5 py-0.5 text-xs text-foreground-secondary">getStatus</code>, and <code className="rounded bg-card px-1.5 py-0.5 text-xs text-foreground-secondary">shutdown</code>.
               </p>
               <div className="mt-3 max-w-2xl">
                 <CodeBlock
@@ -170,6 +186,17 @@ export default function DocsPage() {
                   showLineNumbers
                 />
               </div>
+            </div>
+
+            <div>
+              <h3 className="text-base font-semibold text-foreground">GA contract (what is stable)</h3>
+              <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-foreground-secondary">
+                <li>Initialize once per app process with <code className="rounded bg-card px-1.5 py-0.5 text-xs text-foreground-secondary">Dyno.init(...)</code>.</li>
+                <li>Run embeddings through <code className="rounded bg-card px-1.5 py-0.5 text-xs text-foreground-secondary">dyno.embedText</code> or <code className="rounded bg-card px-1.5 py-0.5 text-xs text-foreground-secondary">dyno.embedTexts</code>.</li>
+                <li>Prefer app-owned <code className="rounded bg-card px-1.5 py-0.5 text-xs text-foreground-secondary">fallback.adapter</code>; <code className="rounded bg-card px-1.5 py-0.5 text-xs text-foreground-secondary">baseUrl/apiKey/model</code> remains a convenience wrapper.</li>
+                <li>Inspect lifecycle via <code className="rounded bg-card px-1.5 py-0.5 text-xs text-foreground-secondary">dyno.getStatus()</code> and close cleanly with <code className="rounded bg-card px-1.5 py-0.5 text-xs text-foreground-secondary">dyno.shutdown()</code>.</li>
+                <li>Low-level runtime client methods remain available for advanced/internal lanes and are not part of the default integration story.</li>
+              </ul>
             </div>
 
             <div>

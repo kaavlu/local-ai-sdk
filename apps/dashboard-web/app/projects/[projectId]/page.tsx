@@ -29,6 +29,7 @@ import { ProjectApiKeysCard } from '@/app/projects/_components/project-api-keys-
 import { ProjectRecentRequestsCard } from '@/app/projects/_components/project-recent-requests-card'
 import { ProjectSetupSummaryCard } from '@/app/projects/_components/project-setup-summary-card'
 import { ProjectValueSummaryCard } from '@/app/projects/_components/project-value-summary-card'
+import { ProjectLocalFirstSignalsCard } from '@/app/projects/_components/project-local-first-signals-card'
 import { buildProjectPageViewModel } from '@/lib/data/project-page-view-model'
 import type { ProjectConfig } from '@/lib/data/dashboard-types'
 
@@ -333,12 +334,8 @@ export default async function ProjectDetailPage({ params }: ProjectDetailPagePro
             action={updateProjectConfigAction}
           />
 
-          <div className="grid gap-4 xl:grid-cols-2">
-            <ProjectSetupSummaryCard summary={pageViewModel} />
-            <ProjectValueSummaryCard summary={pageViewModel} />
-          </div>
-
           <ProjectIntegrationCard
+            sdkSnippet={pageViewModel.integration.sdkSnippet}
             baseUrl={pageViewModel.integration.baseUrl}
             openAiSnippet={pageViewModel.integration.openAiSnippet}
             curlSnippet={pageViewModel.integration.curlSnippet}
@@ -357,6 +354,12 @@ export default async function ProjectDetailPage({ params }: ProjectDetailPagePro
               hasRecentFailures={pageViewModel.guidance.hasRecentFailures}
               className="h-full"
             />
+          </div>
+
+          <div className="grid gap-4 xl:grid-cols-3">
+            <ProjectSetupSummaryCard summary={pageViewModel} />
+            <ProjectLocalFirstSignalsCard summary={pageViewModel} />
+            <ProjectValueSummaryCard summary={pageViewModel} />
           </div>
         </div>
       </div>

@@ -539,3 +539,30 @@ If a new idea conflicts with this architecture, it should be treated as:
 
 not as an implicit default.
 
+---
+
+# 22. Developer Experience Default (Zero Runtime Knobs)
+
+Dyno's canonical SDK developer experience should be:
+
+1. instantiate Dyno once (for example `Dyno.init(...)`)
+2. replace direct cloud inference calls with Dyno SDK calls
+
+By default, app developers should **not** be required to configure:
+- runtime mode flags
+- host adapter selection
+- helper launch arguments
+- process lifecycle orchestration
+- runtime health/readiness wiring
+
+These are internal responsibilities of the SDK/runtime/host-adapter layer.
+
+## Fallback ownership default
+
+In the default architecture, fallback provider URL/key remain app-owned configuration inputs.
+Dyno should not require dashboard-managed relay of provider secrets for common-path integration.
+
+## DX decision rule
+
+If a proposed SDK integration requires app developers to manage runtime internals by default, challenge or reject it unless clearly marked as an advanced/internal-only mode.
+

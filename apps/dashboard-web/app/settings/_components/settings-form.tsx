@@ -233,7 +233,11 @@ export function SettingsForm({
           <div className="space-y-1.5">
             <Label className="text-[11px] font-medium text-foreground/90">Use type</Label>
             <input type="hidden" name="useType" value={useType} />
-            <Select value={useType} onValueChange={setUseType} disabled={isProfileSaving || isBooting}>
+            <Select
+              value={useType}
+              onValueChange={(value) => setUseType(normalizeUseType(value))}
+              disabled={isProfileSaving || isBooting}
+            >
               <SelectTrigger className="h-8 w-full rounded-sm border-border/60 bg-background/60 px-2.5 text-[12px]">
                 <SelectValue placeholder="Select use type" />
               </SelectTrigger>

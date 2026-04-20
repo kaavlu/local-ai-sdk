@@ -6,18 +6,10 @@ import process from 'node:process';
 const rootDir = process.cwd();
 const envPath = path.join(rootDir, 'apps', 'demo-electron', '.env');
 const electronMainPath = path.join(rootDir, 'apps', 'demo-electron', 'src', 'main.ts');
-const agentBaseUrl =
-  process.env.DYNO_AGENT_URL?.trim() ||
-  process.env.LOCAL_AGENT_URL?.trim() ||
-  'http://127.0.0.1:8787';
-const healthUrl = `${agentBaseUrl.replace(/\/$/, '')}/health`;
-const HEALTH_TIMEOUT_MS = 90_000;
-const HEALTH_POLL_MS = 600;
 const RESOLVER_TIMEOUT_MS = 120_000;
 const RESOLVER_POLL_MS = 700;
 
 let shuttingDown = false;
-let agentProc = null;
 let appProc = null;
 let dashboardProc = null;
 
@@ -86,12 +78,9 @@ async function waitForHttp(url, timeoutMs, pollMs, label) {
   return false;
 }
 
-function getRequiredEnv(name) {
+function getOptionalEnv(name, fallback) {
   const value = process.env[name]?.trim();
-  if (!value) {
-    throw new Error(`[demo:start] missing required env var: ${name}`);
-  }
-  return value;
+  return value || fallback;
 }
 
 function loadEnvFile() {
@@ -169,17 +158,9 @@ function spawnNamed(name, npmScript) {
   return child;
 }
 
-async function waitForAgentHealth() {
-  const healthy = await waitForHttp(healthUrl, HEALTH_TIMEOUT_MS, HEALTH_POLL_MS, 'agent');
-  if (!healthy) {
-    throw new Error(`Timed out waiting for agent health at ${healthUrl}`);
-  }
-}
-
 async function ensureDynoResolverReady() {
-  const resolverUrl = getRequiredEnv('DYNO_CONFIG_RESOLVER_URL');
-  const projectId = getRequiredEnv('DYNO_PROJECT_ID');
-  console.log(`[demo:start] dyno mode detected (projectId=${projectId})`);
+  const resolverUrl = getOptionalEnv('DYNO_CONFIG_RESOLVER_URL', 'http://127.0.0.1:3000');
+  console.log('[demo:start] dyno mode detected');
   const alreadyUp = await waitForHttp(resolverUrl, 8000, RESOLVER_POLL_MS, 'config resolver');
   if (alreadyUp) {
     return;
@@ -220,7 +201,7 @@ function shutdown(exitCode = 0) {
     return;
   }
   shuttingDown = true;
-  console.log('[demo:start] stopping app and agent...');
+  console.log('[demo:start] stopping demo processes...');
   if (dashboardProc) {
     console.log('[demo:start] stopping dashboard...');
     runStopDashboard();
@@ -260,13 +241,6 @@ async function main() {
 
   console.log('[demo:start] ensuring previous demo processes are stopped...');
   runStopAll();
-
-  console.log('[demo:start] starting agent...');
-  agentProc = spawnNamed('agent', 'dev:agent');
-  attachLifecycle(agentProc, 'agent');
-
-  console.log('[demo:start] waiting for agent to become healthy...');
-  await waitForAgentHealth();
 
   console.log('[demo:start] starting app...');
   appProc = spawnNamed('app', 'dev:app');

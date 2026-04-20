@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
   DemoProjectConfig,
-} from '@dyno/sdk-ts';
+} from '@dyno/sdk-ts/demo';
 
 type EmbedPurpose = 'index' | 'search';
 

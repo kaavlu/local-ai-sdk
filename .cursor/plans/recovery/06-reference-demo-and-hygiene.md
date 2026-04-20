@@ -78,10 +78,10 @@ Treat [apps/demo-electron](../../../apps/demo-electron) as a **reference/regress
 
 ## Completion criteria
 
-- [ ] `apps/dashboard-web/package.json` **name** is not a placeholder; references updated.
-- [ ] `packages/sdk-ts` exports reflect **primary vs demo** boundaries as decided in stage 1.
-- [ ] `apps/demo-electron` imports resolve against final export map; Dyno mode still documented as reference harness.
-- [ ] No unnecessary new features added to demo app.
+- [x] `apps/dashboard-web/package.json` **name** is not a placeholder; references updated.
+- [x] `packages/sdk-ts` exports reflect **primary vs demo** boundaries as decided in stage 1.
+- [x] `apps/demo-electron` imports resolve against final export map; Dyno mode still documented as reference harness.
+- [x] No unnecessary new features added to demo app.
 
 ## Out of scope
 
@@ -91,4 +91,15 @@ Treat [apps/demo-electron](../../../apps/demo-electron) as a **reference/regress
 
 ## Status
 
-**pending**
+**completed**
+
+## Execution notes
+
+- Verified `apps/dashboard-web/package.json` already uses `"name": "dashboard-web"`; no rename change required in this stage execution.
+- Removed transitional demo re-export from `packages/sdk-ts/src/index.ts` so demo helpers are accessed via `@dyno/sdk-ts/demo`.
+- Added `typesVersions` mapping for `demo` in `packages/sdk-ts/package.json` so TypeScript consumers using classic `moduleResolution: "node"` can resolve `@dyno/sdk-ts/demo`.
+- Updated demo app imports in `apps/demo-electron/src/main.ts` and `apps/demo-electron/src/preload.ts`:
+  - kept primary runtime client import (`DynoSdk`, `MachineStateInput`) on `@dyno/sdk-ts`
+  - moved demo config helpers/types to `@dyno/sdk-ts/demo`
+- Updated root `README.md` wording to reflect that demo helpers are no longer root re-exports.
+- Added `apps/demo-electron/README.md` with a concise statement that demo-electron is a reference/regression harness, not a production SKU.

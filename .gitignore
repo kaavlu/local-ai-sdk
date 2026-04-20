@@ -5,6 +5,11 @@
 
 node_modules/
 dist/
+.next/
+**/.next/
+*.tsbuildinfo
+**/.turbo/
+
 .dyno-agent-data/
 .local-agent-data/
 *.log

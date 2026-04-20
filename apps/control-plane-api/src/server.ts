@@ -17,6 +17,7 @@ import { ProjectContextError, resolveProjectContext } from './project-context.js
 import type { ProjectContext } from './project-context.js';
 import {
   recordRequestExecutionSafely,
+  type RequestExecutionRecordInput,
   type RequestExecutionPath,
 } from './persistence/request-executions.js';
 import { calculateLatencyMs, createRequestMetadata, deriveInputCount, type RequestMetadata } from './request-metadata.js';
@@ -113,6 +114,71 @@ function normalizeChatMessages(messages: unknown): OpenAiChatMessage[] | null {
   return normalized;
 }
 
+function nonEmptyString(value: unknown): string | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function nullableFiniteNumber(value: unknown): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return null;
+  }
+  return value;
+}
+
+function mapTelemetryDecisionToExecutionPath(decision: unknown): RequestExecutionPath {
+  if (decision === 'local' || decision === 'cloud') {
+    return decision;
+  }
+  return 'unknown';
+}
+
+function normalizeTelemetryRecord(raw: unknown): RequestExecutionRecordInput | null {
+  if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) {
+    return null;
+  }
+  const body = raw as Record<string, unknown>;
+  const projectId = nonEmptyString(body.projectId);
+  if (!projectId) {
+    return null;
+  }
+  return {
+    projectId,
+    apiKeyId: nonEmptyString(body.apiKeyId),
+    endpoint: nonEmptyString(body.endpoint) ?? '/sdk/embeddings',
+    useCase: nonEmptyString(body.useCase),
+    logicalModel: nonEmptyString(body.logicalModel),
+    executionPath: mapTelemetryDecisionToExecutionPath(body.decision),
+    executionReason: nonEmptyString(body.reason),
+    status: body.status === 'error' ? 'error' : 'success',
+    httpStatus: nullableFiniteNumber(body.httpStatus),
+    latencyMs: nullableFiniteNumber(body.durationMs ?? body.latencyMs),
+    inputCount: nullableFiniteNumber(body.inputCount),
+    errorType: nonEmptyString(body.errorType),
+    errorCode: nonEmptyString(body.errorCode),
+    requestId: nonEmptyString(body.requestId),
+    upstreamModel: nonEmptyString(body.upstreamModel),
+    localJobId: nonEmptyString(body.localJobId),
+  };
+}
+
+function extractTelemetryEventsPayload(payload: unknown): unknown[] {
+  if (Array.isArray(payload)) {
+    return payload;
+  }
+  if (payload != null && typeof payload === 'object' && !Array.isArray(payload)) {
+    const body = payload as Record<string, unknown>;
+    if (Array.isArray(body.events)) {
+      return body.events;
+    }
+    return [body];
+  }
+  return [];
+}
+
 async function readJsonBody(req: IncomingMessage): Promise<unknown> {
   return await new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
@@ -202,15 +268,16 @@ export async function handleEmbeddingsRequest(
     path: RequestExecutionPath | null,
     reason: string | null,
   ) => {
-    if (!authContext?.projectId) {
+    const resolvedProjectId = authContext?.projectId ?? projectContext?.projectId ?? null;
+    if (!resolvedProjectId) {
       return;
     }
 
     const errorMetadata = status === 'error' ? getOpenAiErrorMetadata(result.body) : { errorType: null, errorCode: null };
     await recordRequestExecutionSafely(
       {
-        projectId: authContext.projectId,
-        apiKeyId: authContext.apiKeyId,
+        projectId: resolvedProjectId,
+        apiKeyId: authContext?.apiKeyId ?? null,
         endpoint: '/v1/embeddings',
         useCase: projectContext?.useCaseType ?? null,
         logicalModel: requestModel ?? projectContext?.logicalModel ?? null,
@@ -257,7 +324,8 @@ export async function handleEmbeddingsRequest(
 
   try {
     authContext = await authenticateRequest(headers);
-    const context = await resolveProjectContext(authContext.projectId);
+    const context = await resolveProjectContext(authContext.projectApiKey, { requireCloudConfig: false });
+    authContext.projectId = context.projectId;
     projectContext = context;
     if (context.useCaseType !== 'embeddings') {
       const result = openAiError(
@@ -357,7 +425,16 @@ export async function handleEmbeddingsRequest(
       return finalize(result);
     }
     if (error instanceof ProjectContextError) {
-      const result = openAiError(error.statusCode, error.message, 'invalid_request_error', error.code);
+      if (authContext && !authContext.projectId && error.projectId) {
+        authContext.projectId = error.projectId;
+      }
+      const isAuthError = error.code === 'invalid_api_key' || error.code === 'revoked_api_key';
+      const result = openAiError(
+        error.statusCode,
+        error.message,
+        isAuthError ? 'authentication_error' : 'invalid_request_error',
+        error.code,
+      );
       await persistEmbeddingsResult(result, 'error', executionPath, error.code);
       return finalize(result);
     }
@@ -383,15 +460,16 @@ export async function handleChatCompletionsRequest(
   let executionReason: string | null = 'local_not_supported';
 
   const persistChatResult = async (result: JsonResponse, status: 'success' | 'error', reason: string | null) => {
-    if (!authContext?.projectId) {
+    const resolvedProjectId = authContext?.projectId ?? projectContext?.projectId ?? null;
+    if (!resolvedProjectId) {
       return;
     }
 
     const errorMetadata = status === 'error' ? getOpenAiErrorMetadata(result.body) : { errorType: null, errorCode: null };
     await recordRequestExecutionSafely(
       {
-        projectId: authContext.projectId,
-        apiKeyId: authContext.apiKeyId,
+        projectId: resolvedProjectId,
+        apiKeyId: authContext?.apiKeyId ?? null,
         endpoint: '/v1/chat/completions',
         useCase: projectContext?.useCaseType ?? null,
         logicalModel: requestModel ?? DYNO_CHAT_MODEL_ID,
@@ -467,7 +545,8 @@ export async function handleChatCompletionsRequest(
 
   try {
     authContext = await authenticateRequest(headers);
-    const context = await resolveProjectContext(authContext.projectId);
+    const context = await resolveProjectContext(authContext.projectApiKey);
+    authContext.projectId = context.projectId;
     projectContext = context;
     const decision = determineExecution({
       useCase: 'chat',
@@ -502,7 +581,16 @@ export async function handleChatCompletionsRequest(
       return finalize(result);
     }
     if (error instanceof ProjectContextError) {
-      const result = openAiError(error.statusCode, error.message, 'invalid_request_error', error.code);
+      if (authContext && !authContext.projectId && error.projectId) {
+        authContext.projectId = error.projectId;
+      }
+      const isAuthError = error.code === 'invalid_api_key' || error.code === 'revoked_api_key';
+      const result = openAiError(
+        error.statusCode,
+        error.message,
+        isAuthError ? 'authentication_error' : 'invalid_request_error',
+        error.code,
+      );
       await persistChatResult(result, 'error', error.code);
       return finalize(result);
     }
@@ -548,12 +636,28 @@ async function handleModelsRequest(
 
   try {
     authContext = await authenticateRequest(headers);
+    const context = await resolveProjectContext(authContext.projectApiKey);
+    authContext.projectId = context.projectId;
     const result = { status: 200, body: getModelsResponse() };
     void persistModelsResult(result, 'success', 'models_listed');
     return finalize(result);
   } catch (error) {
     if (error instanceof ApiKeyAuthError) {
       const result = openAiError(error.statusCode, error.message, 'authentication_error', error.code);
+      await persistModelsResult(result, 'error', error.code);
+      return finalize(result);
+    }
+    if (error instanceof ProjectContextError) {
+      if (authContext && !authContext.projectId && error.projectId) {
+        authContext.projectId = error.projectId;
+      }
+      const isAuthError = error.code === 'invalid_api_key' || error.code === 'revoked_api_key';
+      const result = openAiError(
+        error.statusCode,
+        error.message,
+        isAuthError ? 'authentication_error' : 'invalid_request_error',
+        error.code,
+      );
       await persistModelsResult(result, 'error', error.code);
       return finalize(result);
     }
@@ -620,6 +724,72 @@ export function createServer(): http.Server {
             requestMetadata.requestId,
           );
           json(res, result.status, result.body, result.headers);
+        }
+      })();
+      return;
+    }
+    if (req.method === 'POST' && pathname === '/telemetry/events') {
+      void (async () => {
+        try {
+          const payload = await readJsonBody(req);
+          const rawEvents = extractTelemetryEventsPayload(payload);
+          if (rawEvents.length === 0) {
+            json(res, 400, {
+              error: {
+                message: 'Request must include at least one telemetry event',
+                type: 'invalid_request_error',
+                code: 'invalid_telemetry_payload',
+                param: 'events',
+              },
+            });
+            return;
+          }
+
+          const normalizedEvents = rawEvents
+            .map((event) => normalizeTelemetryRecord(event))
+            .filter((event): event is RequestExecutionRecordInput => event !== null);
+          if (normalizedEvents.length === 0) {
+            json(res, 400, {
+              error: {
+                message: 'No valid telemetry events were provided',
+                type: 'invalid_request_error',
+                code: 'invalid_telemetry_events',
+                param: 'events',
+              },
+            });
+            return;
+          }
+
+          await Promise.all(
+            normalizedEvents.map(async (event) => {
+              await recordRequestExecutionSafely(event, 'sdk-telemetry');
+            }),
+          );
+
+          json(res, 202, {
+            accepted: normalizedEvents.length,
+            dropped: rawEvents.length - normalizedEvents.length,
+          });
+        } catch (error) {
+          if (error instanceof SyntaxError) {
+            json(res, 400, {
+              error: {
+                message: 'Invalid JSON body',
+                type: 'invalid_request_error',
+                code: 'invalid_json',
+                param: null,
+              },
+            });
+            return;
+          }
+          json(res, 500, {
+            error: {
+              message: 'Internal server error',
+              type: 'api_error',
+              code: 'internal_error',
+              param: null,
+            },
+          });
         }
       })();
       return;

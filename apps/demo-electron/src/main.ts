@@ -2,13 +2,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { GoogleGenAI } from '@google/genai';
 import { app, BrowserWindow, ipcMain, powerMonitor } from 'electron';
-import type { DemoProjectConfig, MachineStateInput } from '@dyno/sdk-ts';
-import {
-  createDemoProjectSdkContext,
-  deriveSchedulingFromDemoProject,
-  DynoSdk,
-  HttpDemoConfigProvider,
-} from '@dyno/sdk-ts';
+import { Dyno, type DynoStatus, type MachineStateInput } from '@dyno/sdk-ts';
 
 type EmbedPurpose = 'index' | 'search';
 
@@ -17,10 +11,11 @@ type BackendStatus = {
   backendLabel: string;
   statusLine: string;
   details: string[];
+  runtimeState?: string;
+  runtimeLastError?: string | null;
+  runtimeSource?: string;
+  runtimeVersion?: string | null;
   model?: string;
-  executionPolicy?: string;
-  localMode?: string;
-  projectConfig?: Pick<DemoProjectConfig, 'projectId' | 'use_case_type' | 'strategy_preset'>;
 };
 
 type EmbeddingBackend = {
@@ -30,14 +25,11 @@ type EmbeddingBackend = {
 
 const GEMINI_MODEL = 'gemini-embedding-001';
 
-/** Base URL for the Dyno agent (override with `DYNO_AGENT_URL`; legacy `LOCAL_AGENT_URL` still honored). */
-const AGENT_BASE_URL =
-  (process.env.DYNO_AGENT_URL ?? process.env.LOCAL_AGENT_URL)?.trim() || 'http://127.0.0.1:8787';
-const DEMO_PROJECT_ID = process.env.DYNO_PROJECT_ID?.trim() ?? '';
+const PROJECT_API_KEY = process.env.DYNO_PROJECT_API_KEY?.trim() || process.env.DYNO_API_KEY?.trim() || '';
 const CONFIG_RESOLVER_URL = process.env.DYNO_CONFIG_RESOLVER_URL?.trim() ?? '';
-const CONFIG_RESOLVER_SECRET = process.env.DYNO_CONFIG_RESOLVER_SECRET?.trim() ?? '';
-
-const machineStateSdk = new DynoSdk({ baseUrl: AGENT_BASE_URL });
+const FALLBACK_BASE_URL = process.env.DYNO_FALLBACK_BASE_URL?.trim() ?? '';
+const FALLBACK_API_KEY = process.env.DYNO_FALLBACK_API_KEY?.trim() ?? '';
+const FALLBACK_MODEL = process.env.DYNO_FALLBACK_MODEL?.trim() ?? '';
 
 /** How often to report machine state to the agent (ms). */
 const MACHINE_STATE_INTERVAL_MS = 5000;
@@ -45,32 +37,42 @@ const MACHINE_STATE_INTERVAL_MS = 5000;
 let lastMachineStateErrorLog = 0;
 const MACHINE_STATE_ERROR_LOG_THROTTLE_MS = 30_000;
 
+let dyno: Dyno | null = null;
+let dynoStatus: DynoStatus | null = null;
+
 // Keep demo rendering stable on machines where Chromium GPU subprocesses crash.
 app.disableHardwareAcceleration();
 // Use a deterministic writable path to avoid cache permission failures in some shells.
 app.setPath('userData', path.join(os.tmpdir(), 'dyno-demo-electron'));
 
-async function loadDemoProjectSdkContext() {
-  if (!DEMO_PROJECT_ID) {
-    throw new Error(
-      'DYNO_PROJECT_ID is required for Dyno backend mode (set it in the app environment).',
-    );
+async function ensureDynoReady(): Promise<Dyno> {
+  if (dyno) {
+    return dyno;
   }
-  if (!CONFIG_RESOLVER_URL) {
+  if (!PROJECT_API_KEY) {
+    throw new Error('DYNO_PROJECT_API_KEY (or DYNO_API_KEY) is required for Dyno backend mode.');
+  }
+  if (!FALLBACK_BASE_URL || !FALLBACK_API_KEY) {
     throw new Error(
-      'DYNO_CONFIG_RESOLVER_URL is required for Dyno backend mode (set it in the app environment).',
+      'DYNO_FALLBACK_BASE_URL and DYNO_FALLBACK_API_KEY are required for app-owned fallback configuration.',
     );
   }
 
-  const configProvider = new HttpDemoConfigProvider({
-    configResolverUrl: CONFIG_RESOLVER_URL,
-    resolverSecret: CONFIG_RESOLVER_SECRET || undefined,
-  });
-  return createDemoProjectSdkContext({
-    projectId: DEMO_PROJECT_ID,
-    sdkOptions: { baseUrl: AGENT_BASE_URL },
-    configProvider,
-  });
+  const initOptions: Parameters<typeof Dyno.init>[0] = {
+    projectApiKey: PROJECT_API_KEY,
+    fallback: {
+      baseUrl: FALLBACK_BASE_URL,
+      apiKey: FALLBACK_API_KEY,
+      model: FALLBACK_MODEL || undefined,
+    },
+  };
+  if (CONFIG_RESOLVER_URL) {
+    initOptions.configResolverUrl = CONFIG_RESOLVER_URL;
+  }
+
+  dyno = await Dyno.init(initOptions);
+  dynoStatus = await dyno.getStatus();
+  return dyno;
 }
 
 function parseGeminiVector(raw: unknown): number[] {
@@ -146,67 +148,58 @@ function createGeminiBackend(): EmbeddingBackend {
 function createDynoBackend(): EmbeddingBackend {
   return {
     async getStatus() {
-      const context = await loadDemoProjectSdkContext();
-      const scheduling = deriveSchedulingFromDemoProject(context.projectConfig);
-      console.log('[demo-electron][dyno] project config loaded', {
-        projectId: context.projectConfig.projectId,
-        use_case_type: context.projectConfig.use_case_type,
-        strategy_preset: context.projectConfig.strategy_preset,
-        executionPolicy: scheduling.executionPolicy,
-        localMode: scheduling.localMode,
-      });
+      const runtimeAgentUrl = dynoStatus?.runtime.agentBaseUrl ?? '(runtime unresolved)';
+      try {
+        const runtime = await ensureDynoReady();
+        dynoStatus = await runtime.getStatus();
+      } catch (error) {
+        return {
+          backendId: 'dyno',
+          backendLabel: 'Dyno',
+          statusLine: 'Runtime unavailable',
+          runtimeState: dynoStatus?.runtime.state ?? 'unavailable',
+          runtimeLastError:
+            dynoStatus?.runtime.lastError ?? (error instanceof Error ? error.message : String(error)),
+          runtimeSource: dynoStatus?.runtime.runtimeSource ?? 'external',
+          runtimeVersion: dynoStatus?.runtime.runtimeVersion ?? null,
+          details: [
+            `agentUrl: ${runtimeAgentUrl}`,
+            `runtimeState: ${dynoStatus?.runtime.state ?? 'unavailable'}`,
+            `runtimeError: ${dynoStatus?.runtime.lastError ?? (error instanceof Error ? error.message : String(error))}`,
+          ],
+        };
+      }
+      const resolvedAgentUrl = dynoStatus?.runtime.agentBaseUrl ?? runtimeAgentUrl;
       return {
         backendId: 'dyno',
         backendLabel: 'Dyno',
         statusLine: 'Ready',
-        executionPolicy: scheduling.executionPolicy,
-        localMode: scheduling.localMode,
+        runtimeState: dynoStatus?.runtime.state ?? 'healthy',
+        runtimeLastError: dynoStatus?.runtime.lastError ?? null,
+        runtimeSource: dynoStatus?.runtime.runtimeSource ?? 'external',
+        runtimeVersion: dynoStatus?.runtime.runtimeVersion ?? null,
         details: [
-          `projectId: ${context.projectConfig.projectId}`,
-          `use_case_type: ${context.projectConfig.use_case_type}`,
-          `strategy_preset: ${context.projectConfig.strategy_preset}`,
-          `executionPolicy=${scheduling.executionPolicy}, localMode=${scheduling.localMode}`,
+          `agentUrl: ${resolvedAgentUrl}`,
+          `runtimeState: ${dynoStatus?.runtime.state ?? 'healthy'}`,
+          `runtimeSource: ${dynoStatus?.runtime.runtimeSource ?? 'external'}`,
         ],
-        projectConfig: {
-          projectId: context.projectConfig.projectId,
-          use_case_type: context.projectConfig.use_case_type,
-          strategy_preset: context.projectConfig.strategy_preset,
-        },
       };
     },
     async embedTexts(texts, purpose) {
-      const context = await loadDemoProjectSdkContext();
-      const scheduling = deriveSchedulingFromDemoProject(context.projectConfig);
+      const runtime = await ensureDynoReady();
       console.log('[demo-electron][dyno] embedding request started', {
         purpose,
         count: texts.length,
-        projectId: context.projectConfig.projectId,
-        strategy_preset: context.projectConfig.strategy_preset,
-        executionPolicy: scheduling.executionPolicy,
-        localMode: scheduling.localMode,
       });
       const vectors: number[][] = [];
       for (const text of texts) {
-        const created = await context.sdk.createJob({
-          taskType: 'embed_text',
-          payload: { text },
-          executionPolicy: scheduling.executionPolicy,
-          localMode: scheduling.localMode,
-        });
-        const finalJob = await context.sdk.waitForJobCompletion(created.id, {
-          pollIntervalMs: 300,
-          timeoutMs: 360_000,
-        });
-        if (finalJob.state !== 'completed') {
-          throw new Error(`Dyno embedding job did not complete (state=${finalJob.state}).`);
-        }
-        const result = await context.sdk.getJobResult(created.id);
-        vectors.push(parseDynoEmbeddingOutput(result.output));
+        const result = await runtime.embedText(text);
+        vectors.push(result.embedding);
       }
+      dynoStatus = await runtime.getStatus();
       console.log('[demo-electron][dyno] embedding request completed', {
         purpose,
         count: vectors.length,
-        projectId: context.projectConfig.projectId,
       });
       return vectors;
     },
@@ -235,6 +228,9 @@ function createWindow(): void {
  * Kept in the main process (not renderer); demo-only, not part of the SDK surface.
  */
 function postMachineStateToAgent(): void {
+  if (!dyno) {
+    return;
+  }
   const idleSeconds = powerMonitor.getSystemIdleTime();
   const idleState = powerMonitor.getSystemIdleState(10);
   const isSystemIdle = idleState === 'idle' || idleState === 'locked';
@@ -262,16 +258,16 @@ function postMachineStateToAgent(): void {
       body.thermalState = thermalState;
     }
   }
-  void machineStateSdk.reportMachineState(body).catch((err: unknown) => {
+  void dyno.sdk.reportMachineState(body).catch((err: unknown) => {
     const now = Date.now();
     if (now - lastMachineStateErrorLog >= MACHINE_STATE_ERROR_LOG_THROTTLE_MS) {
       lastMachineStateErrorLog = now;
-      console.warn('[demo-electron] machine-state: report failed (is the agent running?)', err);
+      console.warn('[demo-electron] machine-state: report failed (runtime unavailable?)', err);
     }
   });
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   ipcMain.handle('demo:get-backend-status', async () => embeddingBackend.getStatus());
 
   ipcMain.handle('demo:embed-texts', async (_event, payload: { texts: string[]; purpose: EmbedPurpose }) => {
@@ -286,17 +282,22 @@ app.whenReady().then(() => {
     return { count: vectors.length, dimensions: vectors[0]?.length ?? 0, vectors };
   });
 
-  void machineStateSdk.healthCheck().then(() => {
-    console.log('[demo-electron] agent health: ok');
-  }).catch((err: unknown) => {
-    console.warn('[demo-electron] agent health check failed (is the agent running?)', err);
-  });
+  try {
+    await ensureDynoReady();
+    console.log('[demo-electron] dyno.init completed');
+  } catch (err) {
+    console.warn(
+      '[demo-electron] Dyno init failed; runtime remains unavailable until configuration is fixed',
+      err,
+    );
+  }
 
   createWindow();
   postMachineStateToAgent();
   const machineStateTimer = setInterval(postMachineStateToAgent, MACHINE_STATE_INTERVAL_MS);
   app.on('before-quit', () => {
     clearInterval(machineStateTimer);
+    void dyno?.shutdown('electron_before_quit');
   });
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

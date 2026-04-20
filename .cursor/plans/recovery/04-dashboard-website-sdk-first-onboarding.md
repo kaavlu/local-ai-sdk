@@ -77,10 +77,10 @@ Align **developer-facing onboarding** with [AGENTS.md](../../../AGENTS.md) §2, 
 
 ## Completion criteria
 
-- [ ] Dashboard project integration presents **SDK + local runtime** as the default path; OpenAI-compatible proxy is **clearly secondary**.
-- [ ] Website hero and docs ordering match AGENTS.md §12–13 (proxy optional).
-- [ ] Pricing/marketing language does not **only** describe centralized “routed requests” as the product’s core value without qualification.
-- [ ] Tests updated if they assert old default copy.
+- [x] Dashboard project integration presents **SDK + local runtime** as the default path; OpenAI-compatible proxy is **clearly secondary**.
+- [x] Website hero and docs ordering match AGENTS.md §12–13 (proxy optional).
+- [x] Pricing/marketing language does not **only** describe centralized “routed requests” as the product’s core value without qualification.
+- [x] Tests updated if they assert old default copy.
 
 ## Out of scope
 
@@ -91,4 +91,21 @@ Align **developer-facing onboarding** with [AGENTS.md](../../../AGENTS.md) §2, 
 
 ## Status
 
-**pending**
+**completed**
+
+## Implementation notes
+
+- Added SDK-first integration snippet generation in `project-page-view-model` and preserved OpenAI/cURL snippets as optional hosted compatibility examples.
+- Updated dashboard integration card to show `@dyno/sdk-ts` snippet first, with explicit optional labeling for OpenAI-compatible examples.
+- Updated setup guidance copy to steer first request flow to SDK integration before hosted compatibility examples.
+- Kept website onboarding SDK-first and clarified in docs that dashboard proxy base URL examples are driven by `NEXT_PUBLIC_DYNO_BASE_URL` and are optional.
+
+## Validation notes
+
+- Ran unit tests for `project-page-view-model` and updated assertions for new SDK snippet fields.
+- Ran lint diagnostics for touched files and resolved issues introduced by this change set.
+
+## Follow-up tasks discovered
+
+- Consider adding true local text-generation task support in SDK/runtime so `text_generation` projects can show a generation-native SDK snippet instead of a classification-oriented example.
+- Consider adding UI tabs in integration card (Primary SDK vs Optional OpenAI-compatible) for clearer affordance as snippet count grows.

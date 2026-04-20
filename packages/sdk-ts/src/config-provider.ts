@@ -1,41 +1,46 @@
 import type { DynoSdk } from './client.js';
 import type { DynoSdkOptions, ExecutionPolicy, LocalMode } from './types.js';
 
-export type DemoProjectUseCaseType = 'embeddings' | string;
-export type DemoStrategyPreset = 'local_first' | 'balanced' | 'cloud_first';
+/** Canonical use-case label from project config (dashboard-controlled). */
+export type ProjectUseCaseType = 'embeddings' | string;
+/** Matches dashboard strategy values; do not invent parallel enums. */
+export type ProjectStrategyPreset = 'local_first' | 'balanced' | 'cloud_first';
 
 /**
  * Temporary normalized dashboard config shape for Step 21 Stage 2.
  * This is intentionally small and easy to replace with a control-plane provider later.
  */
-export interface DemoProjectConfig {
+export interface ProjectConfig {
   projectId: string;
-  use_case_type: DemoProjectUseCaseType;
-  strategy_preset: DemoStrategyPreset;
+  use_case_type: ProjectUseCaseType;
+  strategy_preset: ProjectStrategyPreset;
   local_model: string | null;
   cloud_model: string | null;
+  /** Mirrors dashboard `fallback_enabled` when available; defaults to true when omitted. */
+  fallback_enabled?: boolean;
   requires_charging: boolean;
   wifi_only: boolean;
   battery_min_percent: number | null;
   idle_min_seconds: number | null;
 }
 
-export interface ConfigProvider {
-  loadProjectConfig(projectId: string): Promise<DemoProjectConfig>;
+/** Primary config provider interface for SDK runtime orchestration. */
+export interface ProjectConfigProvider {
+  loadProjectConfig(projectId: string): Promise<ProjectConfig>;
 }
 
 export interface DemoProjectSdkContext {
   sdk: DynoSdk;
-  projectConfig: DemoProjectConfig;
+  projectConfig: ProjectConfig;
 }
 
 export interface DemoProjectSdkOptions {
   projectId: string;
   sdkOptions?: Omit<DynoSdkOptions, 'projectId'>;
-  configProvider: ConfigProvider;
+  configProvider: ProjectConfigProvider;
 }
 
-export function mapStrategyPresetToScheduling(strategy: DemoStrategyPreset): {
+export function mapStrategyPresetToScheduling(strategy: ProjectStrategyPreset): {
   executionPolicy: ExecutionPolicy;
   localMode: LocalMode;
 } {
@@ -56,3 +61,12 @@ export function assertEmbeddingsUseCase(config: DemoProjectConfig): void {
     );
   }
 }
+
+/** @deprecated Use `ProjectUseCaseType`. */
+export type DemoProjectUseCaseType = ProjectUseCaseType;
+/** @deprecated Use `ProjectStrategyPreset`. */
+export type DemoStrategyPreset = ProjectStrategyPreset;
+/** @deprecated Use `ProjectConfig`. */
+export type DemoProjectConfig = ProjectConfig;
+/** @deprecated Use `ProjectConfigProvider`. */
+export type ConfigProvider = ProjectConfigProvider;

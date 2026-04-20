@@ -40,6 +40,18 @@ import {
 import { getDebugMetricsJson } from './metrics/index.js';
 
 const PORT = Number(process.env.PORT) || 8787;
+const AGENT_RUNTIME_CONTRACT_VERSION = 'runtime-lifecycle-v1';
+const AGENT_VERSION = '0.0.1';
+
+const AGENT_RUNTIME_LIFECYCLE_STATES = [
+  'unreachable',
+  'healthy_unready',
+  'ready',
+  'executing',
+  'completed',
+  'failed',
+  'timed_out',
+] as const;
 
 function readJsonBody(req: IncomingMessage): Promise<unknown> {
   return new Promise((resolve, reject) => {
@@ -122,7 +134,20 @@ async function main(): Promise<void> {
 
     if (req.method === 'GET' && pathname === '/health') {
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-      res.end(JSON.stringify({ ok: true }));
+      res.end(
+        JSON.stringify({
+          ok: true,
+          runtime: {
+            agentVersion: AGENT_VERSION,
+            contractVersion: AGENT_RUNTIME_CONTRACT_VERSION,
+            lifecycleStates: AGENT_RUNTIME_LIFECYCLE_STATES,
+            capabilities: {
+              readinessDebugV1: true,
+              readinessDetailsV1: true,
+            },
+          },
+        }),
+      );
       return;
     }
 

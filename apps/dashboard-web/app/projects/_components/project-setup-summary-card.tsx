@@ -20,7 +20,7 @@ export function ProjectSetupSummaryCard({ summary }: ProjectSetupSummaryCardProp
   return (
     <ProjectSectionShell
       title="Setup & Health"
-      description="Quick status for configuration, auth, and recent execution behavior."
+      description="Quick status for configuration/auth readiness. Operational local-first outcomes are shown in the Local-first Signals card."
       action={
         <Badge
           variant={health.readyForRequests ? 'secondary' : 'destructive'}
@@ -85,7 +85,7 @@ export function ProjectSetupSummaryCard({ summary }: ProjectSetupSummaryCardProp
           </p>
         ) : guidance.hasNoRequests ? (
           <p className="mt-1 text-[11px] text-foreground/90">
-            Setup is ready. Use the Integration snippet below to send your first request.
+            Setup is ready. Use the SDK integration snippet below to initialize Dyno and send your first request. Runtime lifecycle is managed by the SDK by default. Use the OpenAI-compatible snippet only for hosted compatibility testing.
           </p>
         ) : (
           <p className="mt-1 text-[11px] text-foreground/90">

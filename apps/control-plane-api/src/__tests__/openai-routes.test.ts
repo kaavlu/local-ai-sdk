@@ -16,26 +16,30 @@ import {
 const originalFetch = global.fetch;
 const originalEnv = {
   DYNO_CONFIG_RESOLVER_URL: process.env.DYNO_CONFIG_RESOLVER_URL,
-  DYNO_CONFIG_RESOLVER_SECRET: process.env.DYNO_CONFIG_RESOLVER_SECRET,
-  DYNO_CONFIG_RESOLVER_SECRET_HEADER: process.env.DYNO_CONFIG_RESOLVER_SECRET_HEADER,
+  DYNO_CONFIG_RESOLVER_CONFIG_PATH: process.env.DYNO_CONFIG_RESOLVER_CONFIG_PATH,
   DYNO_UPSTREAM_BASE_URL: process.env.DYNO_UPSTREAM_BASE_URL,
   DYNO_UPSTREAM_API_KEY: process.env.DYNO_UPSTREAM_API_KEY,
   DYNO_UPSTREAM_MODEL: process.env.DYNO_UPSTREAM_MODEL,
   DYNO_AGENT_BASE_URL: process.env.DYNO_AGENT_BASE_URL,
-  DYNO_ENABLE_X_PROJECT_ID_FALLBACK: process.env.DYNO_ENABLE_X_PROJECT_ID_FALLBACK,
 };
+
+function restoreEnvVariable(name: string, value: string | undefined): void {
+  if (value === undefined) {
+    delete process.env[name];
+    return;
+  }
+  process.env[name] = value;
+}
 
 afterEach(() => {
   global.fetch = originalFetch;
   setRequestExecutionRecorderForTests(null);
-  process.env.DYNO_CONFIG_RESOLVER_URL = originalEnv.DYNO_CONFIG_RESOLVER_URL;
-  process.env.DYNO_CONFIG_RESOLVER_SECRET = originalEnv.DYNO_CONFIG_RESOLVER_SECRET;
-  process.env.DYNO_CONFIG_RESOLVER_SECRET_HEADER = originalEnv.DYNO_CONFIG_RESOLVER_SECRET_HEADER;
-  process.env.DYNO_UPSTREAM_BASE_URL = originalEnv.DYNO_UPSTREAM_BASE_URL;
-  process.env.DYNO_UPSTREAM_API_KEY = originalEnv.DYNO_UPSTREAM_API_KEY;
-  process.env.DYNO_UPSTREAM_MODEL = originalEnv.DYNO_UPSTREAM_MODEL;
-  process.env.DYNO_AGENT_BASE_URL = originalEnv.DYNO_AGENT_BASE_URL;
-  process.env.DYNO_ENABLE_X_PROJECT_ID_FALLBACK = originalEnv.DYNO_ENABLE_X_PROJECT_ID_FALLBACK;
+  restoreEnvVariable('DYNO_CONFIG_RESOLVER_URL', originalEnv.DYNO_CONFIG_RESOLVER_URL);
+  restoreEnvVariable('DYNO_CONFIG_RESOLVER_CONFIG_PATH', originalEnv.DYNO_CONFIG_RESOLVER_CONFIG_PATH);
+  restoreEnvVariable('DYNO_UPSTREAM_BASE_URL', originalEnv.DYNO_UPSTREAM_BASE_URL);
+  restoreEnvVariable('DYNO_UPSTREAM_API_KEY', originalEnv.DYNO_UPSTREAM_API_KEY);
+  restoreEnvVariable('DYNO_UPSTREAM_MODEL', originalEnv.DYNO_UPSTREAM_MODEL);
+  restoreEnvVariable('DYNO_AGENT_BASE_URL', originalEnv.DYNO_AGENT_BASE_URL);
 });
 
 function captureRecordedExecutions(): RequestExecutionRecordInput[] {
@@ -53,20 +57,22 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
+function getSdkConfigUrl(baseUrl: string): string {
+  const configuredPath = process.env.DYNO_CONFIG_RESOLVER_CONFIG_PATH ?? '/api/v1/sdk/config';
+  const normalizedPath = configuredPath.startsWith('/') ? configuredPath : `/${configuredPath}`;
+  return `${baseUrl}${normalizedPath}`;
+}
+
 test('POST /v1/embeddings local success path returns OpenAI shape with headers', async () => {
   const executions = captureRecordedExecutions();
   process.env.DYNO_CONFIG_RESOLVER_URL = 'http://resolver.test';
-  process.env.DYNO_CONFIG_RESOLVER_SECRET = 'secret';
   process.env.DYNO_UPSTREAM_BASE_URL = 'http://upstream.test';
   process.env.DYNO_UPSTREAM_API_KEY = 'up-key';
   process.env.DYNO_AGENT_BASE_URL = 'http://agent.test';
 
   global.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
-    if (url === 'http://resolver.test/api/demo/auth/resolve-api-key' && init?.method === 'POST') {
-      return jsonResponse({ projectId: 'proj-123' });
-    }
-    if (url === 'http://resolver.test/api/demo/project-config/proj-123') {
+    if (url === getSdkConfigUrl('http://resolver.test')) {
       return jsonResponse({
         projectId: 'proj-123',
         use_case_type: 'embeddings',
@@ -133,10 +139,7 @@ test('POST /v1/embeddings falls back to cloud when local is not ready', async ()
 
   global.fetch = (async (input: string | URL | Request) => {
     const url = String(input);
-    if (url === 'http://resolver.test/api/demo/auth/resolve-api-key') {
-      return jsonResponse({ projectId: 'proj-123' });
-    }
-    if (url === 'http://resolver.test/api/demo/project-config/proj-123') {
+    if (url === getSdkConfigUrl('http://resolver.test')) {
       return jsonResponse({
         projectId: 'proj-123',
         use_case_type: 'embeddings',
@@ -195,10 +198,7 @@ test('POST /v1/embeddings returns clean OpenAI error when cloud fails', async ()
 
   global.fetch = (async (input: string | URL | Request) => {
     const url = String(input);
-    if (url === 'http://resolver.test/api/demo/auth/resolve-api-key') {
-      return jsonResponse({ projectId: 'proj-123' });
-    }
-    if (url === 'http://resolver.test/api/demo/project-config/proj-123') {
+    if (url === getSdkConfigUrl('http://resolver.test')) {
       return jsonResponse({
         projectId: 'proj-123',
         use_case_type: 'embeddings',
@@ -243,10 +243,7 @@ test('POST /v1/embeddings prefers project-backed upstream config over env vars',
 
   global.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
-    if (url === 'http://resolver.test/api/demo/auth/resolve-api-key' && init?.method === 'POST') {
-      return jsonResponse({ projectId: 'proj-123' });
-    }
-    if (url === 'http://resolver.test/api/demo/project-config/proj-123') {
+    if (url === getSdkConfigUrl('http://resolver.test')) {
       return jsonResponse({
         projectId: 'proj-123',
         use_case_type: 'embeddings',
@@ -294,10 +291,7 @@ test('POST /v1/embeddings returns fallback_disabled when fallback is disabled', 
 
   global.fetch = (async (input: string | URL | Request) => {
     const url = String(input);
-    if (url === 'http://resolver.test/api/demo/auth/resolve-api-key') {
-      return jsonResponse({ projectId: 'proj-123' });
-    }
-    if (url === 'http://resolver.test/api/demo/project-config/proj-123') {
+    if (url === getSdkConfigUrl('http://resolver.test')) {
       return jsonResponse({
         projectId: 'proj-123',
         use_case_type: 'embeddings',
@@ -334,8 +328,17 @@ test('GET /v1/models requires bearer auth and returns OpenAI-compatible models s
   process.env.DYNO_CONFIG_RESOLVER_URL = 'http://resolver.test';
   global.fetch = (async (input: string | URL | Request) => {
     const url = String(input);
-    if (url === 'http://resolver.test/api/demo/auth/resolve-api-key') {
-      return jsonResponse({ projectId: 'proj-123' });
+    if (url === getSdkConfigUrl('http://resolver.test')) {
+      return jsonResponse({
+        projectId: 'proj-123',
+        use_case_type: 'embeddings',
+        strategy_preset: 'cloud_first',
+        fallback_enabled: false,
+        requires_charging: false,
+        wifi_only: false,
+        battery_min_percent: null,
+        idle_min_seconds: null,
+      });
     }
     throw new Error(`Unexpected fetch URL in models test: ${url}`);
   }) as typeof global.fetch;
@@ -398,10 +401,7 @@ test('POST /v1/chat/completions succeeds with bearer auth and records cloud exec
 
   global.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
-    if (url === 'http://resolver.test/api/demo/auth/resolve-api-key') {
-      return jsonResponse({ projectId: 'proj-chat' });
-    }
-    if (url === 'http://resolver.test/api/demo/project-config/proj-chat') {
+    if (url === getSdkConfigUrl('http://resolver.test')) {
       return jsonResponse({
         projectId: 'proj-chat',
         use_case_type: 'text_generation',
@@ -520,10 +520,7 @@ test('POST /v1/chat/completions returns clean error when upstream config is miss
 
   global.fetch = (async (input: string | URL | Request) => {
     const url = String(input);
-    if (url === 'http://resolver.test/api/demo/auth/resolve-api-key') {
-      return jsonResponse({ projectId: 'proj-chat' });
-    }
-    if (url === 'http://resolver.test/api/demo/project-config/proj-chat') {
+    if (url === getSdkConfigUrl('http://resolver.test')) {
       return jsonResponse({
         projectId: 'proj-chat',
         use_case_type: 'text_generation',
@@ -598,7 +595,7 @@ test('POST /v1/embeddings returns authentication_error when bearer token is inva
   process.env.DYNO_CONFIG_RESOLVER_URL = 'http://resolver.test';
   global.fetch = (async (input: string | URL | Request) => {
     const url = String(input);
-    if (url === 'http://resolver.test/api/demo/auth/resolve-api-key') {
+    if (url === getSdkConfigUrl('http://resolver.test')) {
       return jsonResponse({ error: 'unauthorized' }, 401);
     }
     throw new Error(`Unexpected fetch URL in invalid bearer test: ${url}`);
@@ -618,7 +615,7 @@ test('POST /v1/embeddings returns revoked_api_key when key is revoked', async ()
   process.env.DYNO_CONFIG_RESOLVER_URL = 'http://resolver.test';
   global.fetch = (async (input: string | URL | Request) => {
     const url = String(input);
-    if (url === 'http://resolver.test/api/demo/auth/resolve-api-key') {
+    if (url === getSdkConfigUrl('http://resolver.test')) {
       return jsonResponse({ error: 'unauthorized', code: 'revoked_api_key' }, 401);
     }
     throw new Error(`Unexpected fetch URL in revoked bearer test: ${url}`);
@@ -634,8 +631,7 @@ test('POST /v1/embeddings returns revoked_api_key when key is revoked', async ()
   assert.equal(body.error?.code, 'revoked_api_key');
 });
 
-test('POST /v1/embeddings allows optional X-Project-Id fallback when enabled', async () => {
-  process.env.DYNO_ENABLE_X_PROJECT_ID_FALLBACK = 'true';
+test('POST /v1/embeddings rejects X-Project-Id fallback without API key', async () => {
   process.env.DYNO_CONFIG_RESOLVER_URL = 'http://resolver.test';
   process.env.DYNO_UPSTREAM_BASE_URL = 'http://upstream.test';
   process.env.DYNO_UPSTREAM_API_KEY = 'up-key';
@@ -643,7 +639,7 @@ test('POST /v1/embeddings allows optional X-Project-Id fallback when enabled', a
 
   global.fetch = (async (input: string | URL | Request) => {
     const url = String(input);
-    if (url === 'http://resolver.test/api/demo/project-config/proj-fallback') {
+    if (url === getSdkConfigUrl('http://resolver.test')) {
       return jsonResponse({
         projectId: 'proj-fallback',
         use_case_type: 'embeddings',
@@ -671,6 +667,66 @@ test('POST /v1/embeddings allows optional X-Project-Id fallback when enabled', a
     { input: 'hello', model: DYNO_EMBEDDINGS_MODEL_ID },
     { 'x-project-id': 'proj-fallback' },
   );
-  assert.equal(result.status, 200);
-  assert.equal(result.headers?.['X-Dyno-Execution'], 'cloud');
+  const body = result.body as { error?: { code?: string } };
+  assert.equal(result.status, 401);
+  assert.equal(body.error?.code, 'missing_api_key');
+});
+
+test('POST /telemetry/events accepts SDK execution event payload', async () => {
+  const executions = captureRecordedExecutions();
+  const server = createServer();
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  if (!address || typeof address === 'string') {
+    throw new Error('Failed to get server address');
+  }
+
+  const response = await fetch(`http://127.0.0.1:${address.port}/telemetry/events`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json; charset=utf-8' },
+    body: JSON.stringify({
+      eventType: 'embeddings_execution',
+      projectId: 'proj-telemetry',
+      useCase: 'embeddings',
+      decision: 'cloud',
+      reason: 'agent_unavailable',
+      durationMs: 91,
+      fallbackInvoked: true,
+      requestId: 'req-telemetry-1',
+    }),
+  });
+  const body = (await response.json()) as { accepted: number; dropped: number };
+
+  await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+
+  assert.equal(response.status, 202);
+  assert.equal(body.accepted, 1);
+  assert.equal(body.dropped, 0);
+  assert.equal(executions.length, 1);
+  assert.equal(executions[0]?.projectId, 'proj-telemetry');
+  assert.equal(executions[0]?.executionPath, 'cloud');
+  assert.equal(executions[0]?.executionReason, 'agent_unavailable');
+  assert.equal(executions[0]?.latencyMs, 91);
+  assert.equal(executions[0]?.requestId, 'req-telemetry-1');
+});
+
+test('POST /telemetry/events rejects empty payload', async () => {
+  const server = createServer();
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  if (!address || typeof address === 'string') {
+    throw new Error('Failed to get server address');
+  }
+
+  const response = await fetch(`http://127.0.0.1:${address.port}/telemetry/events`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json; charset=utf-8' },
+    body: JSON.stringify({ events: [] }),
+  });
+  const body = (await response.json()) as { error?: { code?: string } };
+
+  await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+
+  assert.equal(response.status, 400);
+  assert.equal(body.error?.code, 'invalid_telemetry_payload');
 });

@@ -67,10 +67,10 @@ The agent already implements policy, readiness, and real local workloads ([packa
 
 ## Completion criteria
 
-- [ ] Primary SDK orchestration path (stage 1) applies **documented** timeouts and error mapping for the chosen vertical slice.
-- [ ] Local attempt is **bounded**; fallback invocation is **predictable** when local is unavailable or fails.
-- [ ] Readiness/health usage is explicit (which endpoints, in what order).
-- [ ] No reliance on hosted `control-plane-api` for this stage’s definition of done.
+- [x] Primary SDK orchestration path (stage 1) applies **documented** timeouts and error mapping for the chosen vertical slice.
+- [x] Local attempt is **bounded**; fallback invocation is **predictable** when local is unavailable or fails.
+- [x] Readiness/health usage is explicit (which endpoints, in what order).
+- [x] No reliance on hosted `control-plane-api` for this stage’s definition of done.
 
 ## Out of scope
 
@@ -81,4 +81,39 @@ The agent already implements policy, readiness, and real local workloads ([packa
 
 ## Status
 
-**pending**
+**completed** (2026-04-15)
+
+## Implementation notes (2026-04-15)
+
+- Applied SDK-side guardrails in `DynoEmbeddingsRuntime` (`packages/sdk-ts/src/embeddings-runtime.ts`) for the embeddings vertical slice:
+  - Added bounded preflight probe sequence before local enqueue:
+    1. `GET /health` via `DynoSdk.healthCheck()` with `preflightTimeoutMs` cap (default `1200`).
+    2. `GET /debug/readiness` via `DynoSdk.getReadinessDebug()` (enabled by default, configurable via `probeReadiness`).
+  - Added explicit fallback reasons for preflight outcomes:
+    - `agent_unavailable`
+    - `local_not_ready_<mode>`
+    - `readiness_probe_failed`
+  - Preserved bounded local execution with configurable `localTimeoutMs`/`localPollIntervalMs`; normalized timeout mapping to `local_job_timeout`.
+  - Mapped terminal local job states to deterministic fallback reasons (`failed`, `cancelled`, non-terminal safety fallback).
+- Extended transport surface:
+  - Added `ReadinessDebugResponse` type in `packages/sdk-ts/src/types.ts`.
+  - Added `DynoSdk.getReadinessDebug()` in `packages/sdk-ts/src/client.ts`.
+- Added/updated SDK tests in `packages/sdk-ts/src/__tests__/embeddings-runtime.telemetry.test.ts` to validate:
+  - agent down → fallback (`agent_unavailable`)
+  - readiness gate blocked → fallback (`local_not_ready_interactive`)
+  - local timeout → fallback (`local_job_timeout`)
+  - existing telemetry non-blocking guarantees still hold
+- No `packages/agent` behavior changes were required for this stage; reliability bounds are enforced at SDK orchestration as intended.
+
+## Validation run
+
+- `npm run typecheck -w @dyno/sdk-ts` ✅
+- `npm run test -w @dyno/sdk-ts` ✅ (5/5 passing)
+- `npm run typecheck -w @dyno/agent` ✅
+- IDE lint diagnostics for changed `sdk-ts` files ✅
+
+## Follow-up tasks discovered
+
+- Add one test for readiness probe timeout (`preflightTimeoutMs`) to verify `readiness_probe_failed` deterministically.
+- Add one test for compatibility behavior when `/debug/readiness` is unavailable (404) to preserve local attempts on older agents.
+- Consider documenting default guardrail caps (`preflightTimeoutMs`, `localTimeoutMs`) in root `README.md` alongside the primary embeddings runtime example.

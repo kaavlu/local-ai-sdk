@@ -4,11 +4,23 @@
   "description": "Dyno TypeScript SDK — client for the local runtime; primary app integration surface",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "typesVersions": {
+    "*": {
+      "demo": [
+        "./dist/demo.d.ts"
+      ]
+    }
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "require": "./dist/index.js",
       "default": "./dist/index.js"
+    },
+    "./demo": {
+      "types": "./dist/demo.d.ts",
+      "require": "./dist/demo.js",
+      "default": "./dist/demo.js"
     }
   },
   "files": [
@@ -16,7 +28,8 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test dist/__tests__/*.test.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.102.1"
