@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { Suspense, useState, useEffect } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 
-export default function SignInPage() {
+function SignInPageContent() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -118,5 +118,13 @@ export default function SignInPage() {
         </Link>
       </div>
     </AuthCard>
+  )
+}
+
+export default function SignInPage() {
+  return (
+    <Suspense fallback={null}>
+      <SignInPageContent />
+    </Suspense>
   )
 }

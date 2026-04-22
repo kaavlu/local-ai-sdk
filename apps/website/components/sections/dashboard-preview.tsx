@@ -5,7 +5,10 @@ import Image from 'next/image'
 
 export function DashboardPreview() {
   return (
-    <section className="relative border-t border-border py-16 md:py-24">
+    <section
+      id="control-plane"
+      className="relative border-t border-border py-16 md:py-24 scroll-mt-24"
+    >
       <div className="mx-auto max-w-6xl px-6">
         <div className="text-center">
           <p className="text-sm font-medium uppercase tracking-widest text-primary">
@@ -15,7 +18,9 @@ export function DashboardPreview() {
             Configure policy and review telemetry
           </h2>
           <p className="mx-auto mt-3 max-w-2xl text-foreground-secondary">
-            Create projects, manage API keys for hosted surfaces, tune local-first policy, and inspect telemetry—config and visibility, not the default inference hot path.
+            Create projects, tune local-first policy, and inspect directional
+            telemetry. Dyno&apos;s control plane drives configuration and
+            visibility while execution decisions stay in the SDK/runtime.
           </p>
         </div>
 
@@ -32,7 +37,7 @@ export function DashboardPreview() {
               <span className="h-[11px] w-[11px] rounded-full bg-[#febc2e]" />
               <span className="h-[11px] w-[11px] rounded-full bg-[#28c840]" />
               <span className="ml-3 text-xs text-foreground-muted">
-                dashboard.dyno.dev
+                dynodev.vercel.app
               </span>
             </div>
             <div className="relative">

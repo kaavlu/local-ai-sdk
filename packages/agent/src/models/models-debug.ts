@@ -1,6 +1,7 @@
 import { getModelsDebugFromWorkloads } from '../workloads/registry.js';
 import type { ClassifyTextModelStateSnapshot } from './classify-text-model.js';
 import type { EmbedTextModelStateSnapshot } from './embed-text-model.js';
+import type { GenerateTextModelStateSnapshot } from './generate-text-model.js';
 import {
   getWorkloadModelRuntimeConfigSnapshot,
   runIdleEvictionAfterLocalJob,
@@ -11,6 +12,7 @@ export function getModelsDebugJson(): {
   workloadModelRuntime: ReturnType<typeof getWorkloadModelRuntimeConfigSnapshot>;
   embed_text: EmbedTextModelStateSnapshot;
   classify_text: ClassifyTextModelStateSnapshot;
+  generate_text: GenerateTextModelStateSnapshot;
 } {
   runIdleEvictionAfterLocalJob();
   return {
@@ -18,6 +20,7 @@ export function getModelsDebugJson(): {
     ...(getModelsDebugFromWorkloads() as {
       embed_text: EmbedTextModelStateSnapshot;
       classify_text: ClassifyTextModelStateSnapshot;
+      generate_text: GenerateTextModelStateSnapshot;
     }),
   };
 }

@@ -1,10 +1,13 @@
 /**
- * Quick SDK smoke test against a reachable local runtime endpoint (read-only GETs).
- * Requires: npm run build -w @dyno/sdk-ts
+ * Quick SDK smoke test against a reachable local runtime endpoint.
+ * Requires: npm run build -w @dynosdk/ts
  *
  * DYNO_AGENT_URL=http://127.0.0.1:9000 — full base URL (legacy LOCAL_AGENT_URL still honored)
  * PORT=9000 — shorthand for http://127.0.0.1:$PORT
  * SMOKE_SKIP_MACHINE_STATE=1 — skip getMachineState()
+ * SMOKE_REQUIRE_LOCAL_GENERATION=0 — allow cloud decision for generation assertion (default requires local)
+ * SMOKE_GENERATION_PROMPT="..." — prompt for generation probe
+ * SMOKE_EXPECT_LOCAL_MODEL="Xenova/distilgpt2" — optional strict local model assertion
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -28,12 +31,12 @@ function resolveBaseUrl() {
 
 async function main() {
   if (!fs.existsSync(SDK_ENTRY)) {
-    console.error('[smoke] SDK not built at packages/sdk-ts/dist/. Run: npm run build -w @dyno/sdk-ts');
+    console.error('[smoke] SDK not built at packages/sdk-ts/dist/. Run: npm run build -w @dynosdk/ts');
     process.exit(1);
   }
 
   const baseUrl = resolveBaseUrl();
-  const { DynoSdk } = await import(pathToFileURL(SDK_ENTRY).href);
+  const { DynoSdk, DynoGenerationRuntime } = await import(pathToFileURL(SDK_ENTRY).href);
   const sdk = new DynoSdk({ baseUrl });
 
   console.log('[smoke] baseUrl=' + baseUrl);
@@ -49,6 +52,82 @@ async function main() {
   } else {
     const ms = await sdk.getMachineState();
     console.log('[smoke] getMachineState:', JSON.stringify(ms));
+  }
+
+  const generationPrompt =
+    process.env.SMOKE_GENERATION_PROMPT?.trim() || 'Write one short sentence about local-first AI.';
+  const expectLocalGeneration = process.env.SMOKE_REQUIRE_LOCAL_GENERATION !== '0';
+  const expectedLocalModel = process.env.SMOKE_EXPECT_LOCAL_MODEL?.trim();
+
+  const generationRuntime = new DynoGenerationRuntime({
+    projectId: 'smoke_generation_project',
+    projectConfigProvider: {
+      async loadProjectConfig() {
+        return {
+          projectId: 'smoke_generation_project',
+          use_case_type: 'text_generation',
+          strategy_preset: 'local_first',
+          local_model: 'Xenova/distilgpt2',
+          cloud_model: null,
+          fallback_enabled: true,
+          requires_charging: false,
+          wifi_only: false,
+          battery_min_percent: null,
+          idle_min_seconds: null,
+        };
+      },
+    },
+    sdk,
+    cloudFallback: async () => ({
+      output: 'fallback smoke output',
+      model: 'smoke-fallback',
+    }),
+  });
+
+  const generation = await generationRuntime.generateText(generationPrompt, {
+    maxNewTokens: 32,
+    temperature: 0.7,
+  });
+  if (!generation.output?.trim()) {
+    throw new Error('generation probe returned empty output');
+  }
+  if (generation.decision !== 'local' && generation.decision !== 'cloud') {
+    throw new Error(`generation probe returned unexpected decision "${String(generation.decision)}"`);
+  }
+  if (expectLocalGeneration && generation.decision !== 'local') {
+    throw new Error(
+      `generation probe expected local decision but received "${generation.decision}" (reason=${generation.reason})`,
+    );
+  }
+  if (
+    generation.decision === 'local' &&
+    expectedLocalModel &&
+    (generation.model ?? '').trim() !== expectedLocalModel
+  ) {
+    throw new Error(
+      `generation probe expected local model "${expectedLocalModel}" but received "${generation.model ?? ''}"`,
+    );
+  }
+
+  console.log(
+    '[smoke] generateText:',
+    JSON.stringify({
+      decision: generation.decision,
+      reason: generation.reason,
+      reasonCategory: generation.reasonCategory,
+      model: generation.model,
+      outputPreview: generation.output.slice(0, 120),
+    }),
+  );
+
+  try {
+    const models = await sdk.getModelDebugInfo();
+    console.log('[smoke] model.generate_text.state:', models.generate_text?.state ?? 'unknown');
+  } catch (error) {
+    console.log(
+      '[smoke] model debug unavailable:',
+      error instanceof Error ? error.message : String(error),
+    );
   }
 
   console.log('[smoke] ok');

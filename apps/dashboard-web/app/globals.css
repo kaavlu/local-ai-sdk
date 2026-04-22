@@ -134,13 +134,12 @@
   animation: fade-in-up 0.4s ease-out;
 }
 
-/* Input and button enhancements */
-input:focus,
-textarea:focus {
-  @apply ring-ring/20;
-}
-
-/* Smooth transitions */
-* {
+/* Smooth transitions for interactive controls */
+a,
+button,
+input,
+textarea,
+select,
+[role='button'] {
   @apply transition-colors duration-150;
 }

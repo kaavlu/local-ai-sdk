@@ -17,6 +17,10 @@ import {
   getEmbedTextModelState,
   unloadEmbedTextModel,
 } from './embed-text-model.js';
+import {
+  getGenerateTextModelState,
+  unloadGenerateTextModel,
+} from './generate-text-model.js';
 
 function readPositiveIntEnv(name: string, fallback: number): number {
   const raw = process.env[name];
@@ -55,9 +59,10 @@ export const DEFAULT_LOCAL_WORKLOAD_EXECUTION_TIMEOUT_MS = readPositiveIntEnv(
 const PER_WORKLOAD_EXECUTION_TIMEOUT_MS: Partial<Record<string, number>> = {
   embed_text: DEFAULT_LOCAL_WORKLOAD_EXECUTION_TIMEOUT_MS,
   classify_text: DEFAULT_LOCAL_WORKLOAD_EXECUTION_TIMEOUT_MS,
+  generate_text: DEFAULT_LOCAL_WORKLOAD_EXECUTION_TIMEOUT_MS,
 };
 
-const REAL_TASK_ORDER = ['embed_text', 'classify_text'] as const;
+const REAL_TASK_ORDER = ['embed_text', 'classify_text', 'generate_text'] as const;
 
 type RealTaskType = (typeof REAL_TASK_ORDER)[number];
 
@@ -65,16 +70,39 @@ function isRealTaskType(s: string): s is RealTaskType {
   return (REAL_TASK_ORDER as readonly string[]).includes(s);
 }
 
+interface WorkloadModelAdapter {
+  getState: () => {
+    state: string;
+    loadedAt: number | null;
+    lastUsedAt: number | null;
+    lastError: string | null;
+  };
+  unload: () => void;
+}
+
+const DEFAULT_WORKLOAD_MODEL_ADAPTERS: Record<RealTaskType, WorkloadModelAdapter> = {
+  embed_text: {
+    getState: getEmbedTextModelState,
+    unload: unloadEmbedTextModel,
+  },
+  classify_text: {
+    getState: getClassifyTextModelState,
+    unload: unloadClassifyTextModel,
+  },
+  generate_text: {
+    getState: getGenerateTextModelState,
+    unload: unloadGenerateTextModel,
+  },
+};
+
+let workloadModelAdapters: Record<RealTaskType, WorkloadModelAdapter> = DEFAULT_WORKLOAD_MODEL_ADAPTERS;
+
 function unloadForTaskType(taskType: RealTaskType): void {
-  if (taskType === 'embed_text') {
-    unloadEmbedTextModel();
-  } else {
-    unloadClassifyTextModel();
-  }
+  workloadModelAdapters[taskType].unload();
 }
 
 function getStateFor(taskType: RealTaskType) {
-  return taskType === 'embed_text' ? getEmbedTextModelState() : getClassifyTextModelState();
+  return workloadModelAdapters[taskType].getState();
 }
 
 function listReadyTaskTypes(): RealTaskType[] {
@@ -89,6 +117,7 @@ function listReadyTaskTypes(): RealTaskType[] {
 
 /** Set between pipeline `executeLocal` entry and finally (single in-flight local job). */
 let activeLocalWorkloadTaskType: string | null = null;
+const timeoutOverridesForTests: Partial<Record<string, number>> = {};
 
 export function beginLocalWorkloadExecution(taskType: string): void {
   activeLocalWorkloadTaskType = taskType;
@@ -103,6 +132,10 @@ export function getActiveLocalWorkloadTaskType(): string | null {
 }
 
 export function getLocalWorkloadExecutionTimeoutMs(taskType: string): number {
+  const testOverride = timeoutOverridesForTests[taskType];
+  if (typeof testOverride === 'number' && testOverride > 0) {
+    return testOverride;
+  }
   return PER_WORKLOAD_EXECUTION_TIMEOUT_MS[taskType] ?? DEFAULT_LOCAL_WORKLOAD_EXECUTION_TIMEOUT_MS;
 }
 
@@ -233,4 +266,32 @@ export function runWithLocalWorkloadTimeout<T>(taskType: string, fn: () => Promi
       clearTimeout(timeoutId);
     }
   });
+}
+
+/** Test hook: override model adapters for deterministic residency/eviction coverage. */
+export function __setWorkloadModelAdaptersForTests(
+  adapters: Record<RealTaskType, WorkloadModelAdapter> | null,
+): void {
+  workloadModelAdapters = adapters ?? DEFAULT_WORKLOAD_MODEL_ADAPTERS;
+}
+
+/** Test hook: temporarily override timeout for one task type. */
+export function __setLocalWorkloadExecutionTimeoutMsForTests(
+  taskType: string,
+  timeoutMs: number | null,
+): void {
+  if (timeoutMs === null) {
+    delete timeoutOverridesForTests[taskType];
+    return;
+  }
+  timeoutOverridesForTests[taskType] = timeoutMs;
+}
+
+/** Test hook: reset active marker and timeout overrides between tests. */
+export function __resetWorkloadModelRuntimeForTests(): void {
+  workloadModelAdapters = DEFAULT_WORKLOAD_MODEL_ADAPTERS;
+  activeLocalWorkloadTaskType = null;
+  for (const key of Object.keys(timeoutOverridesForTests)) {
+    delete timeoutOverridesForTests[key];
+  }
 }

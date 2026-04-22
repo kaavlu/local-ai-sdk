@@ -28,9 +28,9 @@ export function Sidebar() {
   const pathname = usePathname()
 
   return (
-    <aside className="fixed left-0 top-0 h-screen w-[196px] bg-secondary border-r border-border flex flex-col">
+    <aside className="fixed left-0 top-0 flex h-screen w-[196px] flex-col border-r border-border/60 bg-secondary">
       {/* Logo */}
-      <div className="h-11 flex items-center px-3 border-b border-border/50">
+      <div className="flex h-11 items-center border-b border-border/60 px-3">
         <Link href="/dashboard" className="flex items-center gap-2.5">
           <Image
             src="/dyno-logo.png"
@@ -40,7 +40,7 @@ export function Sidebar() {
             className="w-5 h-5"
             priority
           />
-          <span className="text-[13px] font-semibold text-foreground tracking-tight">dyno</span>
+          <span className="text-sm font-semibold tracking-tight text-foreground">dyno</span>
         </Link>
       </div>
 
@@ -54,16 +54,16 @@ export function Sidebar() {
                 <Link
                   href={item.href}
                   className={cn(
-                    'flex items-center gap-2 px-2.5 py-1.5 rounded-sm text-[12px] font-medium transition-colors duration-200',
+                    'group flex items-center gap-2 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors duration-150',
                     isActive
-                      ? 'bg-muted/60 text-foreground shadow-sm'
-                      : 'text-muted-foreground hover:bg-muted/30 hover:text-foreground'
+                      ? 'bg-background/45 text-foreground'
+                      : 'text-muted-foreground hover:bg-background/30 hover:text-foreground'
                   )}
                 >
                   <item.icon
                     className={cn(
-                      'w-3.5 h-3.5 flex-shrink-0',
-                      isActive ? 'text-primary' : 'text-muted-foreground group-hover:text-foreground'
+                      'h-3.5 w-3.5 flex-shrink-0',
+                      isActive ? 'text-primary' : 'text-muted-foreground/90 group-hover:text-foreground'
                     )}
                   />
                   <span className="truncate">{item.label}</span>

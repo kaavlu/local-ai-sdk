@@ -70,8 +70,14 @@ function resolveOptions(args) {
     asOptionalString(args.fallbackApiKey) || asOptionalString(process.env.DYNO_FALLBACK_API_KEY);
   const fallbackModel =
     asOptionalString(args.fallbackModel) || asOptionalString(process.env.DYNO_FALLBACK_MODEL);
+  const fallbackGenerationModel =
+    asOptionalString(args.fallbackGenerationModel) ||
+    asOptionalString(process.env.DYNO_FALLBACK_GENERATION_MODEL);
   const fallbackPath =
     asOptionalString(args.fallbackPath) || asOptionalString(process.env.DYNO_FALLBACK_EMBED_PATH);
+  const fallbackGeneratePath =
+    asOptionalString(args.fallbackGeneratePath) ||
+    asOptionalString(process.env.DYNO_FALLBACK_GENERATE_PATH);
   const fallbackTimeoutMs = asOptionalNumber(
     args.fallbackTimeoutMs ?? process.env.DYNO_DOCTOR_FALLBACK_TIMEOUT_MS,
     4_000,
@@ -79,6 +85,9 @@ function resolveOptions(args) {
   const fallbackSampleText =
     asOptionalString(args.fallbackSampleText) ||
     asOptionalString(process.env.DYNO_DOCTOR_FALLBACK_SAMPLE_TEXT);
+  const fallbackGenerationSampleText =
+    asOptionalString(args.fallbackGenerationSampleText) ||
+    asOptionalString(process.env.DYNO_DOCTOR_FALLBACK_GENERATION_SAMPLE_TEXT);
 
   return {
     runtimeBaseUrl,
@@ -100,9 +109,12 @@ function resolveOptions(args) {
             baseUrl: fallbackBaseUrl,
             apiKey: fallbackApiKey,
             model: fallbackModel,
+            generationModel: fallbackGenerationModel,
             embedPath: fallbackPath,
+            generatePath: fallbackGeneratePath,
             timeoutMs: fallbackTimeoutMs,
             sampleText: fallbackSampleText,
+            generationSampleText: fallbackGenerationSampleText,
           }
         : undefined,
   };
@@ -117,11 +129,17 @@ function printSummary(report) {
   console.log(`[doctor] runtime: ${report.runtime.code} (${report.runtime.message})`);
   console.log(`[doctor] resolver: ${report.resolver.code} (${report.resolver.message})`);
   console.log(`[doctor] fallback: ${report.fallback.code} (${report.fallback.message})`);
+  console.log(
+    `[doctor] fallback.embeddings: ${report.fallback.embeddings.code} (${report.fallback.embeddings.message})`,
+  );
+  console.log(
+    `[doctor] fallback.generation: ${report.fallback.generation.code} (${report.fallback.generation.message})`,
+  );
 }
 
 async function main() {
   if (!fs.existsSync(SDK_DOCTOR_ENTRY)) {
-    console.error('[doctor] SDK not built at packages/sdk-ts/dist/. Run: npm run build -w @dyno/sdk-ts');
+    console.error('[doctor] SDK not built at packages/sdk-ts/dist/. Run: npm run build -w @dynosdk/ts');
     process.exit(1);
   }
 

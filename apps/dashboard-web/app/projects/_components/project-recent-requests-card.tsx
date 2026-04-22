@@ -1,5 +1,9 @@
 import { Badge } from '@/components/ui/badge'
-import { ProjectSectionShell } from '@/app/projects/_components/project-detail-primitives'
+import {
+  ProjectInsetPanel,
+  ProjectSectionShell,
+  ProjectStatusBadge,
+} from '@/app/projects/_components/project-detail-primitives'
 import { cn } from '@/lib/utils'
 import type { ProjectRequestExecution } from '@/lib/data/dashboard-types'
 
@@ -35,31 +39,27 @@ export function ProjectRecentRequestsCard({
   return (
     <ProjectSectionShell
       title="Recent Requests"
-      description="Inspect the latest request outcomes for this project."
+      description="Latest request outcomes for this project."
       className={cn(className)}
       action={
         hasRecentFailures ? (
-          <Badge variant="destructive" className="rounded-md px-2 py-0.5 text-[10px]">
-            Errors detected
-          </Badge>
+          <ProjectStatusBadge tone="error">Errors detected</ProjectStatusBadge>
         ) : (
-          <Badge variant="secondary" className="rounded-md px-2 py-0.5 text-[10px]">
-            Healthy
-          </Badge>
+          <ProjectStatusBadge tone="success">Healthy</ProjectStatusBadge>
         )
       }
     >
       {requests.length === 0 ? (
         <div className="rounded-lg border border-dashed border-border/60 bg-background/30 px-3 py-4">
           <p className="text-[11px] text-muted-foreground/80">
-            No requests yet. Use the Integration snippet to call Dyno with this project&apos;s Dyno API key.
+            No requests yet. Use the Request Tester or your app integration to send a first request.
           </p>
           <p className="mt-1 text-[10px] text-muted-foreground/70">
             Request history appears here after the first successful or failed call.
           </p>
         </div>
       ) : (
-        <div className="rounded-lg border border-border/45 bg-background/30 p-1.5">
+        <ProjectInsetPanel className="p-1.5">
           <div className="overflow-x-auto">
             <table className="w-full min-w-[720px] table-fixed border-collapse text-left text-[11px]">
               <colgroup>
@@ -122,7 +122,7 @@ export function ProjectRecentRequestsCard({
               </tbody>
             </table>
           </div>
-        </div>
+        </ProjectInsetPanel>
       )}
     </ProjectSectionShell>
   )

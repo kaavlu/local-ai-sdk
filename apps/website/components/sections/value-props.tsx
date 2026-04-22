@@ -6,21 +6,21 @@ import { DollarSign, Shield, Layers } from 'lucide-react'
 const values = [
   {
     icon: DollarSign,
-    title: 'Cut cloud inference costs',
+    title: 'Reduce cloud usage when local is viable',
     description:
-      'Run models locally when possible. Only pay for cloud when you actually need it. Teams see 40-70% cost reduction on qualifying workloads.',
+      'Dyno can shift qualifying requests to on-device execution and preserve cloud for the requests that need it. Savings are workload-dependent and measured directionally.',
   },
   {
     icon: Shield,
-    title: 'Zero-downtime fallback',
+    title: 'Reliability-first fallback behavior',
     description:
-      'If local inference fails or isn\u2019t available, the SDK falls back to your existing cloud path automatically—using credentials you already manage.',
+      'Local execution fails fast and falls back to your existing cloud provider path through app-owned adapters and credentials.',
   },
   {
     icon: Layers,
-    title: 'Developer-owned providers',
+    title: 'Same-device local execution model',
     description:
-      'Keep your relationship with OpenAI, Anthropic, or others for fallback. Dyno orchestrates local-first execution around the path you already have.',
+      'Dyno runs local inference on the same end-user device when possible. It is local-or-cloud per user, not cross-user device routing.',
   },
 ]
 
@@ -36,7 +36,10 @@ const itemVariants = {
 
 export function ValueProps() {
   return (
-    <section className="relative border-t border-border py-16 md:py-24">
+    <section
+      id="why-dyno"
+      className="relative border-t border-border py-16 md:py-24 scroll-mt-24"
+    >
       <div className="mx-auto max-w-6xl px-6">
         <div className="text-center">
           <p className="text-sm font-medium uppercase tracking-widest text-primary">

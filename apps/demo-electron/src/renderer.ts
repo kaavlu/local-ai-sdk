@@ -63,6 +63,13 @@ type BackendStatus = {
   backendLabel: string;
   statusLine: string;
   details: string[];
+  runtimeState?: string;
+  runtimeLastError?: string | null;
+  runtimeSource?: string;
+  runtimeVersion?: string | null;
+  generationModelState?: 'not_loaded' | 'loading' | 'ready' | 'failed';
+  generationWarmupState?: 'idle' | 'warming' | 'ready' | 'failed';
+  generationWarmupLastError?: string | null;
   model?: string;
   executionPolicy?: string;
   localMode?: string;
@@ -369,7 +376,11 @@ function renderBackendStatus(status: BackendStatus): void {
   if (backendStatus) {
     backendStatus.textContent =
       status.backendId === 'dyno'
-        ? 'Dyno project config resolved. Ready for semantic indexing.'
+        ? status.generationWarmupState === 'warming'
+          ? 'Dyno project config resolved. Semantic indexing is ready; generation model warmup is in progress.'
+          : status.generationWarmupState === 'failed'
+            ? 'Dyno project config resolved. Generation warmup failed, so first generation may fallback to cloud.'
+            : 'Dyno project config resolved. Ready for semantic indexing.'
         : 'Gemini Cloud is active. Ready for semantic indexing.';
   }
   if (integrationStatus) {
@@ -388,6 +399,12 @@ function renderBackendStatus(status: BackendStatus): void {
     const execution = formatExecutionLabel(status);
     if (execution) {
       summaryLines.push(`Execution target: ${execution}`);
+    }
+    if (status.backendId === 'dyno') {
+      summaryLines.push(`Generation warmup: ${sentenceCase(status.generationWarmupState ?? 'idle')}`);
+      if (status.generationModelState) {
+        summaryLines.push(`Generation model state: ${sentenceCase(status.generationModelState)}`);
+      }
     }
     backendSummary.innerHTML = summaryLines.map((line) => `<li>${escapeHtml(line)}</li>`).join('');
   }

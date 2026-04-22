@@ -17,26 +17,26 @@ export function CTA() {
         transition={{ duration: 0.45 }}
       >
         <h2 className="text-3xl font-bold tracking-tight text-foreground md:text-4xl lg:text-5xl">
-          Start cutting cloud usage without giving up reliability
+          Add local-first AI without losing cloud reliability
         </h2>
         <p className="mt-4 text-lg text-foreground-secondary">
-          Create a project, tune local-first policy in the dashboard, and wire up
-          the SDK and local runtime.
+          Initialize Dyno once, keep your existing provider fallback path, and
+          tune policy from the dashboard.
         </p>
 
         <div className="mt-8 flex flex-wrap items-center justify-center gap-4">
           <Link
-            href="https://dashboard.dyno.dev"
+            href="https://dynodev.vercel.app/signin"
             className="inline-flex items-center gap-2 rounded-lg bg-primary px-7 py-3.5 text-sm font-medium text-white hover:bg-primary-hover"
           >
             Get Started
             <ArrowRight size={16} />
           </Link>
           <Link
-            href="/docs"
+            href="/docs#quickstart"
             className="inline-flex items-center gap-2 rounded-lg border border-border-strong px-7 py-3.5 text-sm text-foreground-secondary hover:border-foreground-muted hover:text-foreground"
           >
-            View Docs
+            View Quickstart
           </Link>
         </div>
 

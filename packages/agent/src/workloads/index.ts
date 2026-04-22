@@ -4,7 +4,13 @@ export type {
   RealWorkloadDefinition,
   WorkloadModelHooks,
 } from './types.js';
-export { parseNonEmptyTextPayload, validateTextObjectPayload } from './payload-validation.js';
+export {
+  parseGenerateTextPayload,
+  parseNonEmptyTextPayload,
+  validateGenerateTextPayload,
+  validateTextObjectPayload,
+  type GenerateTextPayload,
+} from './payload-validation.js';
 export {
   REAL_WORKLOADS,
   getModelsDebugFromWorkloads,

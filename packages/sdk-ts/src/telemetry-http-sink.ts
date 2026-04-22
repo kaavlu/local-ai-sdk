@@ -33,6 +33,13 @@ function createHeaders(
   return headers
 }
 
+function resolveTelemetryEndpoint(event: TelemetryEvent): string {
+  if (event.eventType === 'generate_text_execution' || event.useCase === 'text_generation') {
+    return '/sdk/generate-text'
+  }
+  return '/sdk/embeddings'
+}
+
 /**
  * Best-effort HTTP telemetry sink for SDK runtime execution events.
  * Failures are intentionally swallowed to avoid influencing local/cloud decisions.
@@ -71,10 +78,11 @@ export function createHttpTelemetrySink(options: HttpTelemetrySinkOptions): Tele
           reasonCategory: event.reasonCategory,
           durationMs: event.durationMs,
           fallbackInvoked: event.fallbackInvoked,
+          inputCount: event.itemCount,
           itemCount: event.itemCount,
           successCount: event.successCount,
           failureCount: event.failureCount,
-          endpoint: '/sdk/embeddings',
+          endpoint: resolveTelemetryEndpoint(event),
           status: 'success',
         }),
       })

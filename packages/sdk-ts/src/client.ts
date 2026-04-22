@@ -146,6 +146,18 @@ export class DynoSdk {
   }
 
   /**
+   * `POST /models/generate-text/warmup` — load the generate_text model ahead of jobs.
+   * Throws {@link DynoSdkError} with status 503 if warmup completes in a failed state.
+   */
+  async warmupGenerateTextModel(): Promise<EmbedTextModelDebugRow> {
+    const body = await this.requestJson<{ generate_text: EmbedTextModelDebugRow }>(
+      'POST',
+      '/models/generate-text/warmup',
+    );
+    return body.generate_text;
+  }
+
+  /**
    * Polls GET /jobs/:id until the job is `completed` or `failed`, or the timeout elapses.
    */
   async waitForJobCompletion(

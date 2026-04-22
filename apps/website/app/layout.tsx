@@ -15,13 +15,13 @@ const geistMono = Geist_Mono({
 })
 
 export const metadata: Metadata = {
-  title: 'Dyno — SDK-first local AI with developer-owned cloud fallback',
+  title: 'Dyno — Local-first AI on the same user device',
   description:
-    'Dyno is SDK-first: run AI on the user’s device when it makes sense, and use your existing cloud provider when it does not. The hosted control plane delivers project config and telemetry—not the default inference router.',
+    'Dyno is an SDK + local runtime that runs AI on the same user device when viable, then falls back to the app\'s existing cloud provider path when needed. The control plane provides policy and telemetry.',
   openGraph: {
-    title: 'Dyno — SDK-first local AI',
+    title: 'Dyno — Local-first AI for apps',
     description:
-      'Local-first execution with your existing provider as fallback. Config and telemetry in the control plane.',
+      'On-device execution when viable, predictable app-owned cloud fallback when not.',
     type: 'website',
   },
 }

@@ -2,7 +2,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { GoogleGenAI } from '@google/genai';
 import { app, BrowserWindow, ipcMain, powerMonitor } from 'electron';
-import { Dyno, type DynoStatus, type MachineStateInput } from '@dyno/sdk-ts';
+import { Dyno, type DynoStatus, type MachineStateInput } from '@dynosdk/ts';
 
 type EmbedPurpose = 'index' | 'search';
 
@@ -16,6 +16,9 @@ type BackendStatus = {
   runtimeSource?: string;
   runtimeVersion?: string | null;
   model?: string;
+  generationModelState?: 'not_loaded' | 'loading' | 'ready' | 'failed';
+  generationWarmupState?: 'idle' | 'warming' | 'ready' | 'failed';
+  generationWarmupLastError?: string | null;
 };
 
 type EmbeddingBackend = {
@@ -39,6 +42,12 @@ const MACHINE_STATE_ERROR_LOG_THROTTLE_MS = 30_000;
 
 let dyno: Dyno | null = null;
 let dynoStatus: DynoStatus | null = null;
+let generationModelState: 'not_loaded' | 'loading' | 'ready' | 'failed' | null = null;
+let generationWarmupState: 'idle' | 'warming' | 'ready' | 'failed' = 'idle';
+let generationWarmupLastError: string | null = null;
+let generationWarmupStartedAt: number | null = null;
+let generationWarmupCompletedAt: number | null = null;
+let generationWarmupPromise: Promise<void> | null = null;
 
 // Keep demo rendering stable on machines where Chromium GPU subprocesses crash.
 app.disableHardwareAcceleration();
@@ -72,7 +81,59 @@ async function ensureDynoReady(): Promise<Dyno> {
 
   dyno = await Dyno.init(initOptions);
   dynoStatus = await dyno.getStatus();
+  void refreshGenerationModelState(dyno);
   return dyno;
+}
+
+async function refreshGenerationModelState(runtime: Dyno): Promise<void> {
+  try {
+    const models = await runtime.sdk.getModelDebugInfo();
+    generationModelState = models.generate_text?.state ?? null;
+    if (generationModelState === 'ready' && generationWarmupState === 'idle') {
+      generationWarmupState = 'ready';
+      generationWarmupCompletedAt = Date.now();
+    }
+    if (generationModelState === 'failed' && generationWarmupState !== 'failed') {
+      generationWarmupState = 'failed';
+      generationWarmupLastError = models.generate_text?.lastError ?? null;
+      generationWarmupCompletedAt = Date.now();
+    }
+  } catch {
+    /* keep previous generation model state; status call should stay resilient */
+  }
+}
+
+function startGenerationWarmup(runtime: Dyno): void {
+  if (generationWarmupPromise) {
+    return;
+  }
+  generationWarmupState = 'warming';
+  generationWarmupLastError = null;
+  generationWarmupStartedAt = Date.now();
+  generationWarmupCompletedAt = null;
+  generationWarmupPromise = (async () => {
+    try {
+      const state = await runtime.sdk.warmupGenerateTextModel();
+      generationModelState = state.state;
+      if (state.state === 'ready') {
+        generationWarmupState = 'ready';
+        generationWarmupCompletedAt = Date.now();
+      } else if (state.state === 'failed') {
+        generationWarmupState = 'failed';
+        generationWarmupLastError = state.lastError;
+        generationWarmupCompletedAt = Date.now();
+      } else {
+        generationWarmupState = 'warming';
+      }
+    } catch (error) {
+      generationWarmupState = 'failed';
+      generationWarmupLastError = error instanceof Error ? error.message : String(error);
+      generationWarmupCompletedAt = Date.now();
+    } finally {
+      await refreshGenerationModelState(runtime);
+      generationWarmupPromise = null;
+    }
+  })();
 }
 
 function parseGeminiVector(raw: unknown): number[] {
@@ -152,6 +213,7 @@ function createDynoBackend(): EmbeddingBackend {
       try {
         const runtime = await ensureDynoReady();
         dynoStatus = await runtime.getStatus();
+        await refreshGenerationModelState(runtime);
       } catch (error) {
         return {
           backendId: 'dyno',
@@ -162,26 +224,46 @@ function createDynoBackend(): EmbeddingBackend {
             dynoStatus?.runtime.lastError ?? (error instanceof Error ? error.message : String(error)),
           runtimeSource: dynoStatus?.runtime.runtimeSource ?? 'external',
           runtimeVersion: dynoStatus?.runtime.runtimeVersion ?? null,
+          generationModelState: generationModelState ?? undefined,
+          generationWarmupState,
+          generationWarmupLastError,
           details: [
             `agentUrl: ${runtimeAgentUrl}`,
             `runtimeState: ${dynoStatus?.runtime.state ?? 'unavailable'}`,
             `runtimeError: ${dynoStatus?.runtime.lastError ?? (error instanceof Error ? error.message : String(error))}`,
+            `generationWarmup: ${generationWarmupState}`,
           ],
         };
       }
       const resolvedAgentUrl = dynoStatus?.runtime.agentBaseUrl ?? runtimeAgentUrl;
+      const warmupLine =
+        generationWarmupState === 'warming'
+          ? 'Ready (warming local generation model...)'
+          : generationWarmupState === 'failed'
+            ? 'Ready (generation warmup failed; cloud fallback may be used)'
+            : 'Ready';
+      const warmupDurationMs =
+        generationWarmupStartedAt && generationWarmupCompletedAt
+          ? Math.max(0, generationWarmupCompletedAt - generationWarmupStartedAt)
+          : null;
       return {
         backendId: 'dyno',
         backendLabel: 'Dyno',
-        statusLine: 'Ready',
+        statusLine: warmupLine,
         runtimeState: dynoStatus?.runtime.state ?? 'healthy',
         runtimeLastError: dynoStatus?.runtime.lastError ?? null,
         runtimeSource: dynoStatus?.runtime.runtimeSource ?? 'external',
         runtimeVersion: dynoStatus?.runtime.runtimeVersion ?? null,
+        generationModelState: generationModelState ?? undefined,
+        generationWarmupState,
+        generationWarmupLastError,
         details: [
           `agentUrl: ${resolvedAgentUrl}`,
           `runtimeState: ${dynoStatus?.runtime.state ?? 'healthy'}`,
           `runtimeSource: ${dynoStatus?.runtime.runtimeSource ?? 'external'}`,
+          `generationModelState: ${generationModelState ?? 'unknown'}`,
+          `generationWarmup: ${generationWarmupState}${warmupDurationMs !== null ? ` (${warmupDurationMs}ms)` : ''}`,
+          ...(generationWarmupLastError ? [`generationWarmupError: ${generationWarmupLastError}`] : []),
         ],
       };
     },
@@ -284,6 +366,9 @@ app.whenReady().then(async () => {
 
   try {
     await ensureDynoReady();
+    if (dyno) {
+      startGenerationWarmup(dyno);
+    }
     console.log('[demo-electron] dyno.init completed');
   } catch (err) {
     console.warn(

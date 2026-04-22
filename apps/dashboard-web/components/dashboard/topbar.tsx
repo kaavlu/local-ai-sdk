@@ -31,28 +31,31 @@ export function Topbar({ userEmail }: TopbarProps) {
     : 'U'
 
   return (
-    <header className="h-11 bg-secondary border-b border-border/50 flex items-center justify-between px-3 gap-4">
+    <header className="flex h-11 items-center justify-between gap-3 border-b border-border/60 bg-secondary px-3">
       {/* Left: Workspace name */}
-      <div className="flex items-center gap-1.5">
-        <span className="text-[12px] font-semibold text-foreground tracking-tight">Dyno Labs</span>
-        <span className="text-[9px] px-1 py-0.5 rounded-sm bg-muted/40 text-muted-foreground font-medium border border-border/30">
+      <div className="flex items-center gap-2">
+        <span className="text-xs font-semibold tracking-tight text-foreground">Dyno Labs</span>
+        <span className="rounded-md border border-border/40 bg-background/30 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
           Free
         </span>
       </div>
 
       {/* Center: Search placeholder */}
-      <div className="hidden md:flex items-center gap-1.5 bg-muted/20 border border-border/40 rounded-sm px-2.5 py-1.5 w-[200px] group hover:bg-muted/30 transition-colors">
-        <Search className="w-3 h-3 text-muted-foreground" />
-        <span className="text-[12px] text-muted-foreground group-hover:text-muted-foreground/80">Search...</span>
-        <kbd className="ml-auto text-[9px] text-muted-foreground/50 bg-muted/30 px-1 py-0.5 rounded border border-border/30 font-mono">
+      <button
+        type="button"
+        className="group hidden w-[200px] items-center gap-1.5 rounded-md border border-border/50 bg-background/25 px-2.5 py-1.5 text-left transition-colors hover:bg-background/35 focus-visible:border-ring focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 md:flex"
+      >
+        <Search className="h-3 w-3 text-muted-foreground/85" />
+        <span className="text-xs text-muted-foreground group-hover:text-foreground/80">Search...</span>
+        <kbd className="ml-auto rounded border border-border/40 bg-background/30 px-1 py-0.5 font-mono text-[10px] text-muted-foreground/65">
           /
         </kbd>
-      </div>
+      </button>
 
       {/* Right: Profile dropdown */}
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <button className="w-6 h-6 rounded-sm bg-primary/15 flex items-center justify-center text-[10px] font-semibold text-primary hover:bg-primary/25 transition-colors focus:outline-none focus:ring-2 focus:ring-ring/50 focus:ring-offset-1 focus:ring-offset-secondary">
+          <button className="flex h-7 w-7 items-center justify-center rounded-md border border-border/50 bg-background/30 text-[10px] font-semibold text-foreground transition-colors hover:bg-background/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-offset-1 focus-visible:ring-offset-secondary">
             {initials}
           </button>
         </DropdownMenuTrigger>

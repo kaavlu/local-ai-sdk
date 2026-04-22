@@ -15,11 +15,13 @@ If code, UI, infra, or roadmap decisions conflict with this file, this file wins
 Dyno is a **local-first AI execution platform for apps**.
 
 A developer integrates the Dyno SDK into their app so that, at runtime, the app can:
+
 - run supported AI workloads on the **same end user’s own device** when appropriate
 - otherwise fall back to the developer’s **existing cloud provider**
 - report telemetry and value signals back to Dyno’s hosted control plane when possible
 
 Dyno’s hosted backend is primarily responsible for:
+
 - project configuration
 - policy distribution
 - analytics / telemetry ingestion
@@ -32,6 +34,7 @@ Dyno’s hosted backend is **not** the canonical hot-path inference router in th
 ## What Dyno is not
 
 Dyno is **not**:
+
 - a distributed inference marketplace across random users’ devices
 - a system that routes User C’s request to User D’s laptop
 - primarily a hosted OpenAI proxy product
@@ -54,6 +57,7 @@ App -> Dyno SDK
 ```
 
 This means:
+
 - the real-time local-vs-cloud decision happens in the **SDK/runtime layer**, not in Dyno’s hosted backend
 - the local runtime is tied to the **same user device** making the request
 - if local execution is not viable, the app falls back to the app’s configured cloud provider path
@@ -61,6 +65,7 @@ This means:
 ## Secondary hosted path
 
 Dyno may still support a hosted OpenAI-compatible proxy path for:
+
 - sandbox testing
 - internal demos
 - controlled experiments
@@ -84,6 +89,7 @@ A slightly sharper version:
 > Dyno helps apps opportunistically keep inference on-device, without forcing developers to give up their existing cloud fallback path.
 
 This means the product must preserve two things at once:
+
 - **local execution opportunity**
 - **cloud reliability guarantee**
 
@@ -98,25 +104,27 @@ If Dyno ever makes the app feel less reliable than the cloud-only baseline, Dyno
 A software engineer on the Notes team at Startup X currently sends notes summarization requests to Gemini.
 
 With Dyno:
+
 1. The engineer signs up for Dyno.
 2. In the Dyno dashboard, they create a project called `notes`.
 3. They configure:
-   - fallback provider behavior
-   - local execution policy
-   - rollout rules
-   - supported use case(s)
+  - fallback provider behavior
+  - local execution policy
+  - rollout rules
+  - supported use case(s)
 4. They test the Dyno SDK and local runtime in a sandbox environment.
 5. They integrate Dyno SDK where direct Gemini summarization previously happened.
 6. In production, end-user devices run:
-   - local summarization when the device/runtime/policy conditions allow
-   - Gemini fallback when local execution is not viable
+  - local summarization when the device/runtime/policy conditions allow
+  - Gemini fallback when local execution is not viable
 7. Dyno receives telemetry when possible and shows:
-   - local hit rate
-   - fallback reasons
-   - estimated savings
-   - request outcomes
+  - local hit rate
+  - fallback reasons
+  - estimated savings
+  - request outcomes
 
 In this model:
+
 - Dyno is not brokering every inference request through its own servers
 - Dyno is not moving requests between unrelated users’ devices
 - Dyno is not replacing Gemini; it is orchestrating local-first execution around Gemini
@@ -130,6 +138,7 @@ Dyno has three core layers.
 ## 5.1 Hosted Control Plane / Dashboard
 
 The control plane is responsible for:
+
 - authentication and accounts
 - billing and subscriptions
 - workspace/project management
@@ -146,6 +155,7 @@ The control plane is **not** the primary per-request execution decision maker in
 The Dyno SDK is the main runtime integration surface for developers.
 
 Its responsibilities include:
+
 - loading and caching project configuration from Dyno
 - evaluating whether local execution is viable right now on this device
 - invoking the local runtime if appropriate
@@ -159,6 +169,7 @@ The SDK is the product core. If the SDK is clunky, brittle, or unclear, the prod
 The local runtime is the device-side execution engine.
 
 Its responsibilities include:
+
 - executing supported local workloads
 - exposing a stable local execution interface to the SDK
 - managing model presence / warmup / lifecycle
@@ -176,6 +187,7 @@ The local runtime is a first-class product surface, not an implementation detail
 The developer continues to own their fallback provider relationship.
 
 This means:
+
 - the developer already has Gemini/OpenAI/etc. configured in their app stack
 - Dyno should wrap or integrate with that existing cloud path
 - Dyno should **not** require the app to rely on Dyno-owned provider credentials in the common architecture
@@ -195,14 +207,17 @@ That is the cleanest and safest product shape.
 Dyno does not distribute work across unrelated user devices.
 
 For any given request, the only eligible local execution target is:
+
 - the **same user’s own device**, if that device is currently capable of serving the request
 
 Otherwise:
+
 - the request falls back to cloud
 
 This constraint is non-negotiable in the near-term product.
 
 Examples:
+
 - User A’s request may run on User A’s device
 - User C’s request may not run on User D’s device
 - idle capacity on one user’s machine does not make another user’s requests locally eligible
@@ -216,6 +231,7 @@ Dyno is **local-or-cloud per user**, not distributed edge scheduling across user
 The SDK/runtime makes the local-vs-cloud decision on-device.
 
 ## Inputs to that decision may include
+
 - device memory pressure
 - CPU/GPU availability
 - current user activity / idle state
@@ -226,10 +242,12 @@ The SDK/runtime makes the local-vs-cloud decision on-device.
 - project policy fetched from Dyno
 
 ## The decision output is simple
+
 - `local`
 - or `cloud`
 
 This decision must be:
+
 - fast
 - bounded
 - predictable
@@ -246,6 +264,7 @@ The SDK should never create a worse user experience than simply calling the clou
 The app should periodically fetch project config from Dyno.
 
 Hosted config exists so that developers can centrally manage:
+
 - local execution policy
 - rollout settings
 - feature flags
@@ -256,6 +275,7 @@ Hosted config exists so that developers can centrally manage:
 ## Runtime behavior for config fetch
 
 The SDK should:
+
 - fetch config periodically
 - cache the latest known good config locally
 - continue operating using cached config if Dyno is temporarily unreachable
@@ -280,6 +300,7 @@ That is acceptable.
 ## Canonical telemetry position
 
 Telemetry from SDK/runtime to Dyno is:
+
 - useful
 - directional
 - eventually consistent when needed
@@ -290,12 +311,14 @@ Telemetry is **not** the primary correctness mechanism for inference execution.
 ## Dashboard implications
 
 The dashboard should present usage/savings/reliability data as:
+
 - useful operational insight
 - directional value visibility
 
 It should not claim perfect ground-truth accounting if the product architecture does not support that yet.
 
 This especially matters for:
+
 - savings estimates
 - request counts
 - local hit rate
@@ -310,6 +333,7 @@ These can be highly useful before they are perfectly canonical.
 The Dyno dashboard is the control and visibility layer.
 
 It should allow developers to:
+
 - sign up and pay
 - create projects
 - configure local execution policy
@@ -330,6 +354,7 @@ If a feature assumes the dashboard/control plane must sit in the hot path for or
 The existing hosted API/proxy work is not wasted.
 
 It remains useful for:
+
 - sandbox and local developer testing
 - internal validation
 - hosted fallback/testing modes
@@ -340,6 +365,7 @@ It remains useful for:
 But it should no longer be treated as the primary default product architecture.
 
 If there is tension between:
+
 - improving the hosted proxy
 - improving the SDK + local runtime
 
@@ -365,6 +391,7 @@ Not the other way around.
 Dyno must never make the app feel less reliable than the cloud-only baseline.
 
 ## Reliability principles
+
 - local execution must fail fast
 - fallback must be predictable
 - the SDK should avoid hangs and long ambiguous stalls
@@ -372,6 +399,7 @@ Dyno must never make the app feel less reliable than the cloud-only baseline.
 - worst-case behavior should resemble the developer’s existing cloud-only flow
 
 ## Operational philosophy
+
 Dyno is only worth adopting if the developer can believe:
 
 > Worst case, Dyno behaves like my current cloud path. Best case, it reduces cloud usage and cost.
@@ -383,6 +411,7 @@ That is the trust threshold.
 # 15. Product Scope Boundaries
 
 ## In scope
+
 - local-first inference on the same end-user device
 - cloud fallback using the developer’s existing provider path
 - project-based policy and config
@@ -393,6 +422,7 @@ That is the trust threshold.
 - local runtime lifecycle and health
 
 ## Out of scope for now
+
 - cross-user distributed inference
 - routing requests across arbitrary idle user devices
 - full global edge scheduling
@@ -408,14 +438,18 @@ That is the trust threshold.
 Given this architecture, the most important future work should prioritize:
 
 ## 16.1 SDK Contract
+
 Define clearly:
+
 - how the app calls Dyno
 - how the developer integrates fallback provider usage
 - how the SDK chooses local vs cloud
 - what API shape is exposed to the app
 
 ## 16.2 Local Runtime Packaging and Lifecycle
+
 Define clearly:
+
 - how the local runtime is installed
 - how it is updated
 - how it starts/connects
@@ -423,21 +457,27 @@ Define clearly:
 - how it reports readiness to the SDK
 
 ## 16.3 Config Sync
+
 Define clearly:
+
 - config fetch cadence
 - local cache behavior
 - stale-config behavior
 - offline behavior
 
 ## 16.4 Telemetry Backhaul
+
 Define clearly:
+
 - what events are emitted
 - what is best-effort
 - what is omitted intentionally
 - how the dashboard interprets those signals
 
 ## 16.5 Fallback Integration Pattern
+
 Define clearly:
+
 - how Dyno uses the developer’s existing provider path
 - whether Dyno wraps an existing provider client
 - whether the SDK exposes its own provider abstraction
@@ -452,6 +492,7 @@ Dyno should be positioned as:
 > a local-first AI execution layer for apps
 
 not as:
+
 - a generic hosted inference proxy
 - an edge marketplace
 - a cloud provider replacement
@@ -471,21 +512,27 @@ A more developer-centric version:
 Use these rules when making product or architecture decisions.
 
 ## Rule 1
+
 If a decision makes Dyno more like a hosted inference router and less like a local-first SDK/runtime platform, challenge it.
 
 ## Rule 2
+
 If a decision assumes requests can be moved across unrelated users’ devices, reject it.
 
 ## Rule 3
+
 If a decision requires Dyno to own the developer’s fallback provider credentials in the common production path, challenge it.
 
 ## Rule 4
+
 If a decision improves the SDK/runtime install, execution, fallback, or visibility story, it is likely aligned.
 
 ## Rule 5
+
 If a decision makes local execution less reliable than cloud-only behavior, reject it.
 
 ## Rule 6
+
 If a feature only makes sense when all traffic passes through Dyno servers, treat it as secondary unless explicitly intended for sandbox/testing or enterprise hosted mode.
 
 ---
@@ -493,7 +540,9 @@ If a feature only makes sense when all traffic passes through Dyno servers, trea
 # 19. Current State vs Target State
 
 ## Current state
+
 The project currently contains substantial work toward:
+
 - hosted control-plane APIs
 - hosted OpenAI-compatible endpoints
 - project-backed config
@@ -504,7 +553,9 @@ The project currently contains substantial work toward:
 This work remains valuable.
 
 ## Target state
+
 The project should evolve so that:
+
 - the dashboard/control plane becomes configuration + analytics + billing infrastructure
 - the SDK becomes the main developer integration surface
 - the local runtime becomes the core device-side execution engine
@@ -533,6 +584,7 @@ It is a local-first orchestration layer that makes on-device execution usable wi
 All future design, implementation, UI, and roadmap work should be evaluated against this file.
 
 If a new idea conflicts with this architecture, it should be treated as:
+
 - a special mode,
 - an experimental path,
 - or a different product direction,
@@ -549,6 +601,7 @@ Dyno's canonical SDK developer experience should be:
 2. replace direct cloud inference calls with Dyno SDK calls
 
 By default, app developers should **not** be required to configure:
+
 - runtime mode flags
 - host adapter selection
 - helper launch arguments
@@ -565,4 +618,3 @@ Dyno should not require dashboard-managed relay of provider secrets for common-p
 ## DX decision rule
 
 If a proposed SDK integration requires app developers to manage runtime internals by default, challenge or reject it unless clearly marked as an advanced/internal-only mode.
-

@@ -1,4 +1,4 @@
-// Dyno local runtime — HTTP service for on-device execution consumed by @dyno/sdk-ts (SDK-first; see repo AGENTS.md).
+// Dyno local runtime — HTTP service for on-device execution consumed by @dynosdk/ts (SDK-first; see repo AGENTS.md).
 import http from 'node:http';
 import type { IncomingMessage } from 'node:http';
 import { getAgentDataDir, getDatabaseDebugInfo, initDatabase } from './db/index.js';
@@ -419,6 +419,25 @@ async function main(): Promise<void> {
             String(o.score) +
             ' executor=' +
             row.executor,
+        );
+      } else if (
+        out !== null &&
+        typeof out === 'object' &&
+        !Array.isArray(out) &&
+        (out as Record<string, unknown>).taskType === 'generate_text'
+      ) {
+        const o = out as Record<string, unknown>;
+        const generated = typeof o.output === 'string' ? o.output : '';
+        const preview = generated.length > 80 ? generated.slice(0, 80) + '...' : generated;
+        console.log(
+          '[agent] job: result fetched id=' +
+            jobId +
+            ' generate_text chars=' +
+            String(generated.length) +
+            ' executor=' +
+            row.executor +
+            ' preview=' +
+            JSON.stringify(preview),
         );
       } else {
         console.log('[agent] job: result fetched id=' + jobId);

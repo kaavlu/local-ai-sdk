@@ -5,24 +5,36 @@ import { motion } from 'framer-motion'
 import { ArrowRight } from 'lucide-react'
 import { CodeBlock } from '../code-block'
 
-const heroCode = `import { DynoSdk } from "@dyno/sdk-ts"
+const heroCode = `import OpenAI from "openai"
+import { Dyno } from "@dynosdk/ts"
 
-const sdk = new DynoSdk()
+const provider = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! })
 
-const job = await sdk.createJob({
-  taskType: "embed_text",
-  payload: { text: "How do I reset my password?" },
-  executionPolicy: "cloud_allowed",
-  localMode: "interactive",
+const dyno = await Dyno.init({
+  projectApiKey: process.env.DYNO_PROJECT_API_KEY!,
+  fallback: {
+    generateTextAdapter: async ({ text }) => {
+      const response = await provider.chat.completions.create({
+        model: "gpt-4.1-mini",
+        messages: [{ role: "user", content: text }],
+      })
+      return {
+        output: response.choices[0]?.message?.content ?? "",
+        model: "gpt-4.1-mini",
+      }
+    },
+  },
 })
 
-await sdk.waitForJobCompletion(job.id)
-const result = await sdk.getJobResult(job.id)
-// Local when possible. Your cloud provider when not.`
+const result = await dyno.generateText("Summarize this meeting note")
+console.log(result.decision, result.reason, result.output)`
 
 export function Hero() {
   return (
-    <section className="relative overflow-hidden pt-22 pb-14 md:pt-28 md:pb-20">
+    <section
+      id="product"
+      className="relative overflow-hidden pt-22 pb-14 md:pt-28 md:pb-20 scroll-mt-24"
+    >
       <div className="hero-glow pointer-events-none absolute inset-0" />
       <div className="dot-pattern pointer-events-none absolute inset-0 opacity-40" />
 
@@ -46,27 +58,30 @@ export function Hero() {
               </h1>
 
               <p className="mt-5 max-w-lg text-lg leading-relaxed text-foreground-secondary">
-                Dyno is SDK-first: the SDK and local runtime choose on-device execution when it makes sense, and use your existing cloud provider path when it does not—using credentials you already own. The hosted control plane delivers config and telemetry, not the default per-request inference router.
+                Dyno is an SDK + local runtime that runs AI on the same user&apos;s
+                device when viable and falls back to your existing provider path
+                when it is not. Your app keeps provider credentials. Dyno&apos;s
+                control plane handles policy and telemetry.
               </p>
 
               <div className="mt-7 flex flex-wrap items-center gap-4">
                 <Link
-                  href="https://dashboard.dyno.dev"
+                  href="https://dynodev.vercel.app/signin"
                   className="inline-flex items-center gap-2 rounded-lg bg-primary px-6 py-3 text-sm font-medium text-white hover:bg-primary-hover"
                 >
                   Get Started
                   <ArrowRight size={16} />
                 </Link>
                 <Link
-                  href="/docs"
+                  href="/docs#quickstart"
                   className="inline-flex items-center gap-2 rounded-lg border border-border-strong px-6 py-3 text-sm text-foreground-secondary hover:border-foreground-muted hover:text-foreground"
                 >
-                  View Docs
+                  Quickstart
                 </Link>
               </div>
 
               <p className="mt-5 font-mono text-sm text-foreground-muted">
-                npm install @dyno/sdk-ts
+                npm install @dynosdk/ts
               </p>
             </motion.div>
           </div>

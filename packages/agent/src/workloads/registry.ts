@@ -1,6 +1,7 @@
 import type { JobRecord } from '../jobs/index.js';
 import { executeLocalClassifyText } from '../executors/classify-text.js';
 import { executeLocalEmbedText } from '../executors/embed-text.js';
+import { executeLocalGenerateText } from '../executors/generate-text.js';
 import {
   getClassifyTextModelState,
   warmupClassifyTextModel,
@@ -9,7 +10,11 @@ import {
   getEmbedTextModelState,
   warmupEmbedTextModel,
 } from '../models/embed-text-model.js';
-import { validateTextObjectPayload } from './payload-validation.js';
+import {
+  getGenerateTextModelState,
+  warmupGenerateTextModel,
+} from '../models/generate-text-model.js';
+import { validateGenerateTextPayload, validateTextObjectPayload } from './payload-validation.js';
 import type {
   PayloadValidationResult,
   RealWorkloadDefinition,
@@ -36,6 +41,16 @@ const classifyTextModelHooks: WorkloadModelHooks = {
   warmupFailureLabel: 'classify_text model failed to load',
 };
 
+const generateTextModelHooks: WorkloadModelHooks = {
+  modelsDebugKey: 'generate_text',
+  readinessJsonKey: 'generateTextModel',
+  getState: getGenerateTextModelState,
+  warmup: warmupGenerateTextModel,
+  warmupHttpPath: '/models/generate-text/warmup',
+  warmupResponseField: 'generate_text',
+  warmupFailureLabel: 'generate_text model failed to load',
+};
+
 export const REAL_WORKLOADS: Record<string, RealWorkloadDefinition> = {
   embed_text: {
     taskType: 'embed_text',
@@ -54,6 +69,15 @@ export const REAL_WORKLOADS: Record<string, RealWorkloadDefinition> = {
       return { persistedOutput };
     },
     modelHooks: classifyTextModelHooks,
+  } satisfies RealWorkloadDefinition,
+  generate_text: {
+    taskType: 'generate_text',
+    validatePayload: (payload) => validateGenerateTextPayload(payload),
+    executeLocal: async (job: JobRecord) => {
+      const persistedOutput = await executeLocalGenerateText(job);
+      return { persistedOutput };
+    },
+    modelHooks: generateTextModelHooks,
   } satisfies RealWorkloadDefinition,
 };
 

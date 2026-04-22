@@ -7,7 +7,7 @@ test('Dyno GA surface stays narrow', () => {
     Object.getOwnPropertyNames(Dyno.prototype).filter((name) => name !== 'constructor'),
   );
 
-  const expectedGaMethods = ['embedText', 'embedTexts', 'getStatus', 'shutdown'];
+  const expectedGaMethods = ['embedText', 'embedTexts', 'generateText', 'getStatus', 'shutdown'];
   for (const method of expectedGaMethods) {
     assert.equal(instanceMethods.has(method), true, `missing GA method: ${method}`);
   }

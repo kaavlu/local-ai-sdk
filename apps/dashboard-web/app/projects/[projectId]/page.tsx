@@ -10,6 +10,7 @@ import {
   listRecentProjectRequestExecutions,
   listProjectValueSummaryExecutions,
   listProjectApiKeys,
+  recordProjectRequestExecution,
   revokeProjectApiKey,
   updateProjectConfig,
   updateProjectStrategyPreset,
@@ -17,21 +18,32 @@ import {
 } from '@/lib/data/dashboard-data'
 import { DashboardLayout } from '@/components/dashboard/dashboard-layout'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
+import { DashboardPageHeader } from '@/components/dashboard/surface-primitives'
 import { ProjectDeleteAction } from '@/app/projects/_components/project-delete-action'
 import {
   ProjectConfigForm,
   type ProjectConfigFormState,
   type ProjectConfigFormValues,
 } from '@/app/projects/_components/project-config-form'
+import { ProjectSetupSummaryCard } from '@/app/projects/_components/project-setup-summary-card'
 import { ProjectIntegrationCard } from '@/app/projects/_components/project-integration-card'
 import { ProjectApiKeysCard } from '@/app/projects/_components/project-api-keys-card'
 import { ProjectRecentRequestsCard } from '@/app/projects/_components/project-recent-requests-card'
-import { ProjectSetupSummaryCard } from '@/app/projects/_components/project-setup-summary-card'
-import { ProjectValueSummaryCard } from '@/app/projects/_components/project-value-summary-card'
-import { ProjectLocalFirstSignalsCard } from '@/app/projects/_components/project-local-first-signals-card'
+import {
+  ProjectRequestTesterCard,
+  type ProjectRequestTesterState,
+} from '@/app/projects/_components/project-request-tester-card'
 import { buildProjectPageViewModel } from '@/lib/data/project-page-view-model'
 import type { ProjectConfig } from '@/lib/data/dashboard-types'
+import {
+  getProjectRuntimeControlCapability,
+  isCapabilityEditable,
+} from '@/lib/data/project-capability-matrix'
+import {
+  ProjectMetadataItem,
+  ProjectMetadataRow,
+  ProjectStatusBadge,
+} from '@/app/projects/_components/project-detail-primitives'
 
 interface ProjectDetailPageProps {
   params: Promise<{
@@ -41,6 +53,10 @@ interface ProjectDetailPageProps {
 
 function getLogicalModelForUseCase(useCaseType: string): string {
   return useCaseType === 'text_generation' ? 'dyno-chat-1' : 'dyno-embeddings-1'
+}
+
+function getDynoRequestEndpoint(useCaseType: string): '/embeddings' | '/chat/completions' {
+  return useCaseType === 'text_generation' ? '/chat/completions' : '/embeddings'
 }
 
 export default async function ProjectDetailPage({ params }: ProjectDetailPageProps) {
@@ -84,7 +100,6 @@ export default async function ProjectDetailPage({ params }: ProjectDetailPagePro
     const localModelRaw = String(formData.get('localModel') ?? '')
     const strategyPresetRaw = String(formData.get('strategyPreset') ?? '')
     const fallbackEnabledRaw = String(formData.get('fallbackEnabled') ?? 'true')
-    const upstreamProviderTypeRaw = String(formData.get('upstreamProviderType') ?? '')
     const upstreamBaseUrlRaw = String(formData.get('upstreamBaseUrl') ?? '')
     const upstreamModelRaw = String(formData.get('upstreamModel') ?? '')
     const upstreamApiKeyRaw = String(formData.get('upstreamApiKey') ?? '')
@@ -104,7 +119,7 @@ export default async function ProjectDetailPage({ params }: ProjectDetailPagePro
           ? strategyPresetRaw
           : resolvedProject.strategy_preset,
       fallbackEnabled: fallbackEnabledRaw === 'true',
-      upstreamProviderType: upstreamProviderTypeRaw === 'openai_compatible' ? 'openai_compatible' : 'openai_compatible',
+      upstreamProviderType: 'openai_compatible',
       upstreamBaseUrl: upstreamBaseUrlRaw,
       upstreamModel: upstreamModelRaw,
       upstreamApiKey: upstreamApiKeyRaw,
@@ -117,16 +132,45 @@ export default async function ProjectDetailPage({ params }: ProjectDetailPagePro
     }
 
     const fieldErrors: ProjectConfigFormState['fieldErrors'] = {}
+    const batteryMinPercentEditable = isCapabilityEditable(
+      getProjectRuntimeControlCapability('batteryMinPercent').state,
+    )
+    const idleMinSecondsEditable = isCapabilityEditable(
+      getProjectRuntimeControlCapability('idleMinSeconds').state,
+    )
+    const requiresChargingEditable = isCapabilityEditable(
+      getProjectRuntimeControlCapability('requiresCharging').state,
+    )
+    const wifiOnlyEditable = isCapabilityEditable(getProjectRuntimeControlCapability('wifiOnly').state)
 
-    const parsedBattery =
+    const parsedBatteryFromForm =
       batteryMinPercentRaw.trim() === '' ? null : Number.parseFloat(batteryMinPercentRaw)
-    if (parsedBattery !== null && (!Number.isFinite(parsedBattery) || parsedBattery < 0 || parsedBattery > 100)) {
+    if (
+      batteryMinPercentEditable &&
+      parsedBatteryFromForm !== null &&
+      (!Number.isFinite(parsedBatteryFromForm) || parsedBatteryFromForm < 0 || parsedBatteryFromForm > 100)
+    ) {
       fieldErrors.batteryMinPercent = 'Enter 0-100 or leave empty.'
     }
 
-    const parsedIdle = idleMinSecondsRaw.trim() === '' ? null : Number.parseFloat(idleMinSecondsRaw)
-    if (parsedIdle !== null && (!Number.isFinite(parsedIdle) || parsedIdle < 0)) {
+    const parsedIdleFromForm = idleMinSecondsRaw.trim() === '' ? null : Number.parseFloat(idleMinSecondsRaw)
+    if (idleMinSecondsEditable && parsedIdleFromForm !== null && (!Number.isFinite(parsedIdleFromForm) || parsedIdleFromForm < 0)) {
       fieldErrors.idleMinSeconds = 'Enter 0 or higher, or leave empty.'
+    }
+    const parsedBattery = batteryMinPercentEditable
+      ? parsedBatteryFromForm
+      : (config?.battery_min_percent ?? null)
+    const parsedIdle = idleMinSecondsEditable ? parsedIdleFromForm : (config?.idle_min_seconds ?? null)
+    const requiresCharging = requiresChargingEditable
+      ? values.requiresCharging
+      : (config?.requires_charging ?? false)
+    const wifiOnly = wifiOnlyEditable ? values.wifiOnly : (config?.wifi_only ?? false)
+    const normalizedValues: ProjectConfigFormValues = {
+      ...values,
+      batteryMinPercent: parsedBattery === null ? '' : String(parsedBattery),
+      idleMinSeconds: parsedIdle === null ? '' : String(parsedIdle),
+      requiresCharging,
+      wifiOnly,
     }
     const parsedEstimatedCloudCostPerRequestUsd =
       estimatedCloudCostPerRequestUsdRaw.trim() === ''
@@ -166,7 +210,7 @@ export default async function ProjectDetailPage({ params }: ProjectDetailPagePro
       return {
         status: 'error',
         fieldErrors,
-        values,
+        values: normalizedValues,
       }
     }
 
@@ -184,8 +228,8 @@ export default async function ProjectDetailPage({ params }: ProjectDetailPagePro
         battery_min_percent: parsedBattery,
         idle_min_seconds: parsedIdle,
         estimated_cloud_cost_per_request_usd: parsedEstimatedCloudCostPerRequestUsd,
-        requires_charging: values.requiresCharging,
-        wifi_only: values.wifiOnly,
+        requires_charging: requiresCharging,
+        wifi_only: wifiOnly,
       })
       if (values.strategyPreset !== resolvedProject.strategy_preset) {
         await updateProjectStrategyPreset(resolvedProject.id, values.strategyPreset)
@@ -195,7 +239,7 @@ export default async function ProjectDetailPage({ params }: ProjectDetailPagePro
       return {
         status: 'error',
         message: error instanceof Error ? error.message : 'Failed to save configuration.',
-        values,
+        values: normalizedValues,
       }
     }
 
@@ -204,7 +248,7 @@ export default async function ProjectDetailPage({ params }: ProjectDetailPagePro
     return {
       status: 'success',
       values: {
-        ...values,
+        ...normalizedValues,
         upstreamApiKey: '',
       },
       apiKeyConfigured: updatedConfig?.upstream_api_key_configured ?? false,
@@ -276,91 +320,230 @@ export default async function ProjectDetailPage({ params }: ProjectDetailPagePro
     }
   }
 
+  async function sendTestRequestAction(
+    current: ProjectRequestTesterState,
+    formData: FormData,
+  ): Promise<ProjectRequestTesterState> {
+    'use server'
+
+    const dynoApiKey = String(formData.get('dynoApiKey') ?? '').trim()
+    const requestInput = String(formData.get('requestInput') ?? '').trim()
+    if (!dynoApiKey) {
+      return {
+        status: 'error',
+        message: 'Dyno API key is required.',
+        values: {
+          requestInput: current.values.requestInput,
+        },
+      }
+    }
+    if (!requestInput) {
+      return {
+        status: 'error',
+        message: 'Enter input text before sending a test request.',
+        values: {
+          requestInput,
+        },
+      }
+    }
+
+    const endpoint = getDynoRequestEndpoint(resolvedProject.use_case_type)
+    const requestUrl = `${pageViewModel.integration.baseUrl}${endpoint}`
+    const startedAt = Date.now()
+    const requestBody =
+      resolvedProject.use_case_type === 'text_generation'
+        ? {
+            model: pageViewModel.integration.logicalModel,
+            messages: [{ role: 'user', content: requestInput }],
+          }
+        : {
+            model: pageViewModel.integration.logicalModel,
+            input: requestInput,
+          }
+
+    try {
+      const response = await fetch(requestUrl, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${dynoApiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(requestBody),
+        cache: 'no-store',
+      })
+      const responseText = await response.text()
+      const requestId = response.headers.get('x-dyno-request-id')
+      const executionPathHeader = response.headers.get('x-dyno-execution')
+      const executionReasonHeader = response.headers.get('x-dyno-reason')
+      let responsePreview = responseText
+      let parsedMessage: string | null = null
+      let parsedErrorCode: string | null = null
+      let parsedErrorType: string | null = null
+      try {
+        const parsed = JSON.parse(responseText) as {
+          error?: {
+            message?: string
+            code?: string
+            type?: string
+          }
+        }
+        responsePreview = JSON.stringify(parsed, null, 2)
+        parsedMessage = parsed.error?.message ?? null
+        parsedErrorCode = parsed.error?.code ?? null
+        parsedErrorType = parsed.error?.type ?? null
+      } catch {
+        // Keep raw response preview when body is not JSON.
+      }
+
+      try {
+        await recordProjectRequestExecution({
+          projectId: resolvedProject.id,
+          endpoint: `/v1${endpoint}`,
+          useCase: resolvedProject.use_case_type,
+          logicalModel: pageViewModel.integration.logicalModel,
+          executionPath:
+            executionPathHeader === 'local' || executionPathHeader === 'cloud' || executionPathHeader === 'unknown'
+              ? executionPathHeader
+              : response.ok
+                ? 'unknown'
+                : 'cloud',
+          executionReason: executionReasonHeader ?? (response.ok ? 'dashboard_request_tester' : parsedErrorCode),
+          status: response.ok ? 'success' : 'error',
+          httpStatus: response.status,
+          latencyMs: Date.now() - startedAt,
+          inputCount: 1,
+          errorType: response.ok ? null : parsedErrorType,
+          errorCode: response.ok ? null : parsedErrorCode,
+          requestId,
+        })
+      } catch {
+        // Non-fatal: request itself succeeded/failed independently of telemetry persistence.
+      }
+
+      revalidatePath(`/projects/${resolvedProject.id}`)
+      if (!response.ok) {
+        return {
+          status: 'error',
+          httpStatus: response.status,
+          message: parsedMessage ?? `Test request failed (${response.status}).`,
+          responsePreview,
+          values: {
+            requestInput,
+          },
+        }
+      }
+
+      return {
+        status: 'success',
+        httpStatus: response.status,
+        message: 'Test request succeeded. Refreshing recent request telemetry...',
+        responsePreview,
+        values: {
+          requestInput,
+        },
+      }
+    } catch (error) {
+      return {
+        status: 'error',
+        message: error instanceof Error ? error.message : 'Failed to send test request.',
+        values: {
+          requestInput,
+        },
+      }
+    }
+  }
+
   return (
     <DashboardLayout userEmail={user.email}>
       <div className="space-y-4">
-        <section className="rounded-xl border border-border/55 bg-card/95 p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div className="max-w-3xl">
-              <p className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground/75">Project</p>
-              <h1 className="mt-1 text-[20px] font-semibold tracking-tight text-foreground">{resolvedProject.name}</h1>
-              {resolvedProject.description ? (
-                <p className="mt-2 text-[12px] leading-relaxed text-muted-foreground/85">
-                  {resolvedProject.description}
-                </p>
-              ) : (
-                <p className="mt-2 text-[12px] text-muted-foreground/65">No description provided.</p>
-              )}
-            </div>
+        <DashboardPageHeader
+          eyebrow="Project"
+          title={resolvedProject.name}
+          description={resolvedProject.description || 'No description provided.'}
+          action={
             <div className="flex items-center gap-2">
               <ProjectDeleteAction projectName={resolvedProject.name} action={deleteProjectAction} />
-              <Button asChild variant="outline" className="h-8 rounded-md border-border/60 px-3 text-[11px] font-medium">
+              <Button asChild variant="outline" size="sm" className="border-border/60 text-xs font-medium">
                 <Link href="/projects">Back to Projects</Link>
               </Button>
             </div>
-          </div>
-
-          <div className="mt-4 grid gap-2 sm:grid-cols-3">
-            <div className="rounded-lg border border-border/45 bg-background/35 px-3 py-2.5">
-              <p className="text-[10px] uppercase tracking-wide text-muted-foreground/70">Use case</p>
-              <Badge variant="secondary" className="mt-1 rounded-md px-2 py-0.5 text-[10px] uppercase tracking-wide">
-                {resolvedProject.use_case_type.replace(/_/g, ' ')}
-              </Badge>
-            </div>
-            <div className="rounded-lg border border-border/45 bg-background/35 px-3 py-2.5">
-              <p className="text-[10px] uppercase tracking-wide text-muted-foreground/70">Routing strategy</p>
-              <Badge variant="outline" className="mt-1 rounded-md border-border/55 px-2 py-0.5 text-[10px] capitalize">
-                {resolvedProject.strategy_preset.replace(/_/g, ' ')}
-              </Badge>
-            </div>
-            <div className="rounded-lg border border-border/45 bg-background/35 px-3 py-2.5">
-              <p className="text-[10px] uppercase tracking-wide text-muted-foreground/70">Project status</p>
-              <Badge
-                variant={resolvedProject.status === 'active' ? 'default' : 'secondary'}
-                className="mt-1 rounded-md px-2 py-0.5 text-[10px] capitalize"
-              >
-                {resolvedProject.status}
-              </Badge>
-            </div>
-          </div>
-        </section>
+          }
+        >
+          <p className="text-xs text-muted-foreground/75">Project detail and operational controls.</p>
+          <ProjectMetadataRow className="mt-3">
+            <ProjectMetadataItem
+              label="Use case"
+              value={
+                <ProjectStatusBadge tone="neutral" className="uppercase tracking-wide">
+                  {resolvedProject.use_case_type.replace(/_/g, ' ')}
+                </ProjectStatusBadge>
+              }
+            />
+            <ProjectMetadataItem
+              label="Routing strategy"
+              value={
+                <ProjectStatusBadge tone="neutral" className="capitalize">
+                  {resolvedProject.strategy_preset.replace(/_/g, ' ')}
+                </ProjectStatusBadge>
+              }
+            />
+            <ProjectMetadataItem
+              label="Project status"
+              value={
+                <ProjectStatusBadge tone={resolvedProject.status === 'active' ? 'success' : 'neutral'} className="capitalize">
+                  {resolvedProject.status}
+                </ProjectStatusBadge>
+              }
+            />
+          </ProjectMetadataRow>
+        </DashboardPageHeader>
 
         <div className="space-y-4">
-          <ProjectConfigForm
-            projectId={resolvedProject.id}
-            useCaseType={resolvedProject.use_case_type}
-            initialStrategyPreset={resolvedProject.strategy_preset}
-            initialConfig={config}
-            action={updateProjectConfigAction}
-          />
+          <ProjectSetupSummaryCard summary={pageViewModel} />
 
-          <ProjectIntegrationCard
-            sdkSnippet={pageViewModel.integration.sdkSnippet}
-            baseUrl={pageViewModel.integration.baseUrl}
-            openAiSnippet={pageViewModel.integration.openAiSnippet}
-            curlSnippet={pageViewModel.integration.curlSnippet}
-            hasApiKeys={pageViewModel.health.hasApiKeys}
-          />
+          <div id="runtime-configuration">
+            <ProjectConfigForm
+              projectId={resolvedProject.id}
+              useCaseType={resolvedProject.use_case_type}
+              initialStrategyPreset={resolvedProject.strategy_preset}
+              initialConfig={config}
+              action={updateProjectConfigAction}
+            />
+          </div>
 
-          <div className="grid items-stretch gap-4 xl:grid-cols-2">
+          <div id="integration">
+            <ProjectIntegrationCard
+              sdkSnippet={pageViewModel.integration.sdkSnippet}
+              hasApiKeys={pageViewModel.health.hasApiKeys}
+            />
+          </div>
+
+          <div id="api-keys">
             <ProjectApiKeysCard
               keys={apiKeys}
               activeKeyCount={pageViewModel.health.activeApiKeyCount}
               createAction={createProjectApiKeyAction}
               revokeAction={revokeProjectApiKeyAction}
             />
-            <ProjectRecentRequestsCard
-              requests={recentRequests}
-              hasRecentFailures={pageViewModel.guidance.hasRecentFailures}
-              className="h-full"
-            />
           </div>
 
-          <div className="grid gap-4 xl:grid-cols-3">
-            <ProjectSetupSummaryCard summary={pageViewModel} />
-            <ProjectLocalFirstSignalsCard summary={pageViewModel} />
-            <ProjectValueSummaryCard summary={pageViewModel} />
+          <div className="grid items-stretch gap-4 xl:grid-cols-2">
+            <div id="request-tester">
+              <ProjectRequestTesterCard
+                useCaseType={resolvedProject.use_case_type}
+                logicalModel={pageViewModel.integration.logicalModel}
+                action={sendTestRequestAction}
+              />
+            </div>
+            <div id="recent-requests">
+              <ProjectRecentRequestsCard
+                requests={recentRequests}
+                hasRecentFailures={pageViewModel.guidance.hasRecentFailures}
+                className="h-full"
+              />
+            </div>
           </div>
+
         </div>
       </div>
     </DashboardLayout>

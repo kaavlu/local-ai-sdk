@@ -1,7 +1,28 @@
 {
-  "name": "@dyno/sdk-ts",
+  "name": "@dynosdk/ts",
   "version": "0.0.1",
   "description": "Dyno TypeScript SDK — client for the local runtime; primary app integration surface",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kaavlu/local-ai-sdk.git",
+    "directory": "packages/sdk-ts"
+  },
+  "homepage": "https://github.com/kaavlu/local-ai-sdk/tree/main/packages/sdk-ts#readme",
+  "bugs": {
+    "url": "https://github.com/kaavlu/local-ai-sdk/issues"
+  },
+  "keywords": [
+    "dyno",
+    "local-first",
+    "ai",
+    "sdk",
+    "typescript",
+    "on-device"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "typesVersions": {
@@ -26,6 +47,9 @@
   "files": [
     "dist"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",

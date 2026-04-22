@@ -4,7 +4,12 @@ import { useActionState } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { ProjectSectionShell } from '@/app/projects/_components/project-detail-primitives'
+import {
+  ProjectInlineAlert,
+  ProjectInsetPanel,
+  ProjectSectionShell,
+  ProjectStatusBadge,
+} from '@/app/projects/_components/project-detail-primitives'
 import type { ProjectApiKeyListItem } from '@/lib/data/dashboard-types'
 
 type CreateApiKeyState = {
@@ -42,14 +47,14 @@ export function ProjectApiKeysCard({ keys, activeKeyCount, createAction, revokeA
   return (
     <ProjectSectionShell
       title="Dyno API Keys"
-      description="Create project-scoped keys for bearer auth to hosted surfaces (optional OpenAI-compatible API, resolver tooling). Keys are only shown once at creation."
+      description="Create and manage project API keys for authenticated requests."
       action={
-        <Badge variant="outline" className="rounded-md border-border/55 px-2 py-0.5 text-[10px]">
+        <ProjectStatusBadge tone="neutral">
           Active keys: {activeKeyCount}
-        </Badge>
+        </ProjectStatusBadge>
       }
     >
-      <div className="mb-3 rounded-lg border border-border/45 bg-background/30 p-2.5">
+      <ProjectInsetPanel className="mb-3 p-2">
         <form action={createFormAction} className="grid gap-2 sm:grid-cols-[1fr_auto]">
           <Input
             name="label"
@@ -63,27 +68,26 @@ export function ProjectApiKeysCard({ keys, activeKeyCount, createAction, revokeA
           </Button>
         </form>
         <p className="mt-2 text-[10px] text-muted-foreground/75">
-          The Integration section uses one of these as <code className="font-mono">DYNO_API_KEY</code>.
+          Use these as <code className="font-mono">DYNO_PROJECT_API_KEY</code> in your app and the Request Tester.
         </p>
-      </div>
+      </ProjectInsetPanel>
 
       {createState.status === 'success' && createState.createdKey ? (
-        <div className="mb-4 rounded-lg border border-amber-500/40 bg-amber-500/10 p-2.5">
-          <p className="text-[11px] font-medium text-foreground">Copy this key now. It will not be shown again.</p>
+        <ProjectInlineAlert tone="warning" title="Copy this key now. It will not be shown again." className="mb-3">
           <p className="mt-1 break-all font-mono text-[11px] text-foreground">{createState.createdKey}</p>
-        </div>
+        </ProjectInlineAlert>
       ) : null}
 
       {createState.status === 'error' && createState.message ? (
-        <p className="mb-3 rounded-sm border border-destructive/30 bg-destructive/10 px-2.5 py-2 text-[11px] text-destructive">
+        <ProjectInlineAlert tone="error" className="mb-3">
           {createState.message}
-        </p>
+        </ProjectInlineAlert>
       ) : null}
 
       {revokeState.status === 'error' && revokeState.message ? (
-        <p className="mb-3 rounded-sm border border-destructive/30 bg-destructive/10 px-2.5 py-2 text-[11px] text-destructive">
+        <ProjectInlineAlert tone="error" className="mb-3">
           {revokeState.message}
-        </p>
+        </ProjectInlineAlert>
       ) : null}
 
       <div className="space-y-2">
@@ -95,10 +99,7 @@ export function ProjectApiKeysCard({ keys, activeKeyCount, createAction, revokeA
           keys.map((key) => {
             const isRevoked = Boolean(key.revoked_at)
             return (
-              <div
-                key={key.id}
-                className="flex flex-col gap-2 rounded-lg border border-border/45 bg-background/35 p-2.5 sm:flex-row sm:items-center sm:justify-between"
-              >
+              <div key={key.id} className="flex flex-col gap-2 rounded-md border border-border/50 bg-background/30 p-2 sm:flex-row sm:items-center sm:justify-between">
                 <div className="space-y-1">
                   <p className="text-[11px] font-medium text-foreground">
                     {key.label?.trim() || 'Untitled key'}{' '}
@@ -108,10 +109,7 @@ export function ProjectApiKeysCard({ keys, activeKeyCount, createAction, revokeA
                     <span>Created {formatDate(key.created_at)}</span>
                     <span>•</span>
                     <span>Last used {formatDate(key.last_used_at)}</span>
-                    <Badge
-                      variant={isRevoked ? 'outline' : 'secondary'}
-                      className="ml-1 rounded-md px-1.5 py-0 text-[9px]"
-                    >
+                    <Badge variant={isRevoked ? 'outline' : 'secondary'} className="ml-1 rounded-md px-1.5 py-0 text-[9px]">
                       {isRevoked ? 'Revoked' : 'Active'}
                     </Badge>
                   </div>

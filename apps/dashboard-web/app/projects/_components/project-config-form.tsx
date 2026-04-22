@@ -21,6 +21,16 @@ import type {
   UpstreamProviderType,
   UseCaseType,
 } from '@/lib/data/dashboard-types'
+import {
+  getProjectRuntimeControlCapability,
+  isCapabilityEditable,
+} from '@/lib/data/project-capability-matrix'
+import {
+  ProjectInlineAlert,
+  ProjectInsetPanel,
+  ProjectSectionShell,
+  ProjectStatusBadge,
+} from '@/app/projects/_components/project-detail-primitives'
 
 export type ProjectConfigFormValues = {
   strategyPreset: StrategyPreset
@@ -128,7 +138,14 @@ function toFormValues(
   }
 }
 
-function getClientFieldErrors(values: ProjectConfigFormValues, apiKeyConfigured: boolean) {
+function getClientFieldErrors(
+  values: ProjectConfigFormValues,
+  apiKeyConfigured: boolean,
+  options: {
+    batteryMinPercentEditable: boolean
+    idleMinSecondsEditable: boolean
+  },
+) {
   const errors: ProjectConfigFormState['fieldErrors'] = {}
 
   if (!values.upstreamProviderType) {
@@ -151,19 +168,16 @@ function getClientFieldErrors(values: ProjectConfigFormValues, apiKeyConfigured:
     if (!values.upstreamModel.trim()) {
       errors.upstreamModel = 'Upstream model is required when fallback is enabled.'
     }
-    if (!apiKeyConfigured && !values.upstreamApiKey.trim()) {
-      errors.upstreamApiKey = 'API key is required when fallback is enabled.'
-    }
   }
 
-  if (values.batteryMinPercent !== '') {
+  if (options.batteryMinPercentEditable && values.batteryMinPercent !== '') {
     const parsed = Number(values.batteryMinPercent)
     if (!Number.isFinite(parsed) || parsed < 0 || parsed > 100) {
       errors.batteryMinPercent = 'Enter 0-100 or leave empty.'
     }
   }
 
-  if (values.idleMinSeconds !== '') {
+  if (options.idleMinSecondsEditable && values.idleMinSeconds !== '') {
     const parsed = Number(values.idleMinSeconds)
     if (!Number.isFinite(parsed) || parsed < 0) {
       errors.idleMinSeconds = 'Enter 0 or higher, or leave empty.'
@@ -236,7 +250,15 @@ export function ProjectConfigForm({
   }, [state.apiKeyConfigured, state.apiKeyLastUpdatedAt, state.status, state.values])
 
   const clientFieldErrors = useMemo(
-    () => getClientFieldErrors(values, apiKeyConfigured),
+    () =>
+      getClientFieldErrors(values, apiKeyConfigured, {
+        batteryMinPercentEditable: isCapabilityEditable(
+          getProjectRuntimeControlCapability('batteryMinPercent').state,
+        ),
+        idleMinSecondsEditable: isCapabilityEditable(
+          getProjectRuntimeControlCapability('idleMinSeconds').state,
+        ),
+      }),
     [apiKeyConfigured, values],
   )
   const hasClientErrors = Object.keys(clientFieldErrors).length > 0
@@ -281,9 +303,18 @@ export function ProjectConfigForm({
   const cloudConnected =
     values.fallbackEnabled &&
     values.upstreamBaseUrl.trim().length > 0 &&
-    values.upstreamModel.trim().length > 0 &&
-    (apiKeyConfigured || values.upstreamApiKey.trim().length > 0)
+    values.upstreamModel.trim().length > 0
   const localEnabled = values.localModel.trim().length > 0
+  const batteryMinPercentCapability = getProjectRuntimeControlCapability('batteryMinPercent')
+  const idleMinSecondsCapability = getProjectRuntimeControlCapability('idleMinSeconds')
+  const wifiOnlyCapability = getProjectRuntimeControlCapability('wifiOnly')
+  const requiresChargingCapability = getProjectRuntimeControlCapability('requiresCharging')
+  const batteryMinPercentEditable = isCapabilityEditable(batteryMinPercentCapability.state)
+  const idleMinSecondsEditable = isCapabilityEditable(idleMinSecondsCapability.state)
+  const wifiOnlyEditable = isCapabilityEditable(wifiOnlyCapability.state)
+  const requiresChargingEditable = isCapabilityEditable(requiresChargingCapability.state)
+  const hasEditableRunConditions =
+    batteryMinPercentEditable || idleMinSecondsEditable || wifiOnlyEditable || requiresChargingEditable
 
   const selectCloudProviderProfile = (provider: CloudProviderProfile) => {
     setCloudProviderProfile(provider)
@@ -311,21 +342,19 @@ export function ProjectConfigForm({
   }
 
   return (
-    <div className="rounded-xl border border-border/50 bg-card/95 p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
-      <div className="mb-3 flex items-center justify-between gap-3">
-        <div>
-          <h2 className="text-[13px] font-semibold tracking-tight text-foreground">Runtime Configuration</h2>
-          <p className="mt-1 text-[11px] text-muted-foreground/80">
-            Configure fallback behavior, model mapping, and execution safeguards.
-          </p>
-        </div>
-        {state.status === 'success' && !isDirty ? (
-          <p className="text-[10px] text-primary/90">Saved.</p>
+    <ProjectSectionShell
+      title="Runtime Configuration"
+      description="Configure fallback behavior, model mapping, and execution safeguards."
+      action={
+        state.status === 'success' && !isDirty ? (
+          <ProjectStatusBadge tone="success">Saved</ProjectStatusBadge>
         ) : state.status === 'error' && state.message ? (
-          <p className="text-[10px] text-destructive">Save failed.</p>
-        ) : null}
-      </div>
-
+          <ProjectStatusBadge tone="error">Save failed</ProjectStatusBadge>
+        ) : (
+          <ProjectStatusBadge tone="neutral">Draft</ProjectStatusBadge>
+        )
+      }
+    >
       <form action={formAction} className="space-y-4">
         <input type="hidden" name="projectId" value={projectId} />
         <input type="hidden" name="strategyPreset" value={values.strategyPreset} />
@@ -345,7 +374,7 @@ export function ProjectConfigForm({
         <input type="hidden" name="requiresCharging" value={values.requiresCharging ? 'true' : 'false'} />
         <input type="hidden" name="wifiOnly" value={values.wifiOnly ? 'true' : 'false'} />
 
-        <div className="rounded-lg border border-border/45 bg-background/30 p-3.5">
+        <ProjectInsetPanel>
           <div className="space-y-1.5">
             <Label htmlFor="strategy-preset" className="text-[11px] font-medium text-foreground/90">
               Runtime behavior
@@ -380,10 +409,10 @@ export function ProjectConfigForm({
             </Select>
             {strategyError ? <p className="text-[11px] text-destructive">{strategyError}</p> : null}
           </div>
-        </div>
+        </ProjectInsetPanel>
 
         <div className="grid gap-3 sm:grid-cols-2">
-          <div className="rounded-lg border border-border/45 bg-background/30 p-3.5">
+          <ProjectInsetPanel>
             <div className="mb-3 flex items-start justify-between gap-2">
               <div>
                 <p className="text-[11px] font-medium text-foreground/90">Cloud target</p>
@@ -407,9 +436,9 @@ export function ProjectConfigForm({
                 Model: {values.upstreamModel.trim() || 'Not configured'}
               </p>
             </div>
-          </div>
+          </ProjectInsetPanel>
 
-          <div className="rounded-lg border border-border/45 bg-background/30 p-3.5">
+          <ProjectInsetPanel>
             <div className="mb-3 flex items-start justify-between gap-2">
               <div>
                 <p className="text-[11px] font-medium text-foreground/90">Local target</p>
@@ -428,10 +457,10 @@ export function ProjectConfigForm({
             <p className="text-[11px] text-muted-foreground/80">
               Model: {values.localModel.trim() || 'Not configured'}
             </p>
-          </div>
+          </ProjectInsetPanel>
         </div>
 
-        <div className="rounded-lg border border-border/45 bg-background/30 p-3.5">
+        <ProjectInsetPanel>
           <div className="mb-2 flex items-center justify-between gap-2">
             <p className="text-[11px] font-medium text-foreground/90">Run conditions</p>
             <Button
@@ -450,10 +479,16 @@ export function ProjectConfigForm({
             <p>Wi-Fi only: {values.wifiOnly ? 'Yes' : 'No'}</p>
             <p>Requires charging: {values.requiresCharging ? 'Yes' : 'No'}</p>
           </div>
-        </div>
+          {!hasEditableRunConditions ? (
+            <p className="mt-2 text-[10px] text-muted-foreground/80">
+              Run-condition controls are visible for transparency, but currently not enforced by the default
+              SDK runtime path.
+            </p>
+          ) : null}
+        </ProjectInsetPanel>
 
         <Collapsible open={showAdvanced} onOpenChange={setShowAdvanced}>
-          <div className="rounded-lg border border-border/45 bg-background/30 p-3.5">
+          <ProjectInsetPanel>
             <div className="flex items-center justify-between gap-2">
               <div>
                 <p className="text-[11px] font-medium text-foreground/90">Advanced configuration</p>
@@ -469,7 +504,7 @@ export function ProjectConfigForm({
             </div>
 
             <CollapsibleContent className="mt-3 space-y-3">
-              <div className="rounded-lg border border-border/45 bg-background/35 p-2.5">
+              <ProjectInsetPanel className="p-2">
                 <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/80">
                   Routing
                 </p>
@@ -516,9 +551,9 @@ export function ProjectConfigForm({
                     />
                   </div>
                 </div>
-              </div>
+              </ProjectInsetPanel>
 
-              <div className="rounded-lg border border-border/45 bg-background/35 p-2.5">
+              <ProjectInsetPanel className="p-2">
                 <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/80">
                   Cloud
                 </p>
@@ -579,24 +614,29 @@ export function ProjectConfigForm({
                     {upstreamModelError ? <p className="text-[11px] text-destructive">{upstreamModelError}</p> : null}
                   </div>
                   <div className="space-y-1.5">
-                    <Label className="text-[11px] font-medium text-foreground/90">Upstream API key</Label>
+                    <Label className="text-[11px] font-medium text-foreground/90">
+                      Upstream API key (optional hosted relay)
+                    </Label>
                     <Input
                       type="password"
                       value={values.upstreamApiKey}
                       onChange={(event) =>
                         setValues((previous) => ({ ...previous, upstreamApiKey: event.target.value }))
                       }
-                      placeholder={apiKeyConfigured ? 'Enter new key to rotate' : 'Enter provider API key'}
+                      placeholder={apiKeyConfigured ? 'Enter new key to rotate' : 'Leave empty for app-owned fallback'}
                       className="h-8 rounded-sm border-border/60 bg-background/60 px-2.5 text-[12px]"
                       disabled={isPending}
                       autoComplete="off"
                     />
+                    <p className="text-[10px] text-muted-foreground/75">
+                      Optional non-default relay path. Canonical SDK fallback keeps provider credentials in app code.
+                    </p>
                     {upstreamApiKeyError ? <p className="text-[11px] text-destructive">{upstreamApiKeyError}</p> : null}
                   </div>
                 </div>
-              </div>
+              </ProjectInsetPanel>
 
-              <div className="rounded-lg border border-border/45 bg-background/35 p-2.5">
+              <ProjectInsetPanel className="p-2">
                 <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/80">
                   Local
                 </p>
@@ -613,9 +653,9 @@ export function ProjectConfigForm({
                     autoComplete="off"
                   />
                 </div>
-              </div>
+              </ProjectInsetPanel>
 
-              <div className="rounded-lg border border-border/45 bg-background/35 p-2.5">
+              <ProjectInsetPanel className="p-2">
                 <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/80">
                   Runtime constraints
                 </p>
@@ -632,9 +672,12 @@ export function ProjectConfigForm({
                       }
                       placeholder="20"
                       className="h-8 rounded-sm border-border/60 bg-background/60 px-2.5 text-[12px]"
-                      disabled={isPending}
+                      disabled={isPending || !batteryMinPercentEditable}
                     />
                     {batteryError ? <p className="text-[11px] text-destructive">{batteryError}</p> : null}
+                    {!batteryMinPercentEditable ? (
+                      <p className="text-[10px] text-muted-foreground/75">{batteryMinPercentCapability.note}</p>
+                    ) : null}
                   </div>
                   <div className="space-y-1.5">
                     <Label className="text-[11px] font-medium text-foreground/90">Idle min seconds</Label>
@@ -647,9 +690,12 @@ export function ProjectConfigForm({
                       }
                       placeholder="30"
                       className="h-8 rounded-sm border-border/60 bg-background/60 px-2.5 text-[12px]"
-                      disabled={isPending}
+                      disabled={isPending || !idleMinSecondsEditable}
                     />
                     {idleError ? <p className="text-[11px] text-destructive">{idleError}</p> : null}
+                    {!idleMinSecondsEditable ? (
+                      <p className="text-[10px] text-muted-foreground/75">{idleMinSecondsCapability.note}</p>
+                    ) : null}
                   </div>
                 </div>
                 <div className="mt-3 grid gap-2 sm:grid-cols-2">
@@ -663,7 +709,7 @@ export function ProjectConfigForm({
                       onCheckedChange={(checked) =>
                         setValues((previous) => ({ ...previous, wifiOnly: checked }))
                       }
-                      disabled={isPending}
+                      disabled={isPending || !wifiOnlyEditable}
                       aria-label="Wi-Fi only"
                     />
                   </div>
@@ -677,14 +723,19 @@ export function ProjectConfigForm({
                       onCheckedChange={(checked) =>
                         setValues((previous) => ({ ...previous, requiresCharging: checked }))
                       }
-                      disabled={isPending}
+                      disabled={isPending || !requiresChargingEditable}
                       aria-label="Requires charging"
                     />
                   </div>
                 </div>
-              </div>
+                {!wifiOnlyEditable || !requiresChargingEditable ? (
+                  <p className="mt-2 text-[10px] text-muted-foreground/75">
+                    {wifiOnlyCapability.note}
+                  </p>
+                ) : null}
+              </ProjectInsetPanel>
 
-              <div className="rounded-lg border border-border/45 bg-background/35 p-2.5">
+              <ProjectInsetPanel className="p-2">
                 <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/80">
                   Metadata / labeling
                 </p>
@@ -714,9 +765,9 @@ export function ProjectConfigForm({
                     <p className="text-[11px] text-destructive">{estimatedCloudCostPerRequestUsdError}</p>
                   ) : null}
                 </div>
-              </div>
+              </ProjectInsetPanel>
             </CollapsibleContent>
-          </div>
+          </ProjectInsetPanel>
         </Collapsible>
 
         <Dialog open={showCloudDialog} onOpenChange={setShowCloudDialog}>
@@ -727,7 +778,7 @@ export function ProjectConfigForm({
             <DialogHeader className="gap-1">
               <DialogTitle className="text-[13px] font-semibold tracking-tight">Configure cloud</DialogTitle>
               <DialogDescription className="text-[11px] text-muted-foreground/75">
-                Set provider, model, credentials, and optional advanced cloud settings.
+                Set provider and model defaults. App-owned fallback credentials are the canonical path.
               </DialogDescription>
             </DialogHeader>
 
@@ -770,26 +821,6 @@ export function ProjectConfigForm({
                 {upstreamModelError ? <p className="text-[11px] text-destructive">{upstreamModelError}</p> : null}
               </div>
 
-              <div className="space-y-1.5">
-                <Label className="text-[11px] font-medium text-foreground/90">Upstream API key</Label>
-                <Input
-                  type="password"
-                  value={values.upstreamApiKey}
-                  onChange={(event) =>
-                    setValues((previous) => ({ ...previous, upstreamApiKey: event.target.value }))
-                  }
-                  placeholder={apiKeyConfigured ? 'Enter new key to rotate' : 'Enter provider API key'}
-                  className="h-8 rounded-sm border-border/60 bg-background/60 px-2.5 text-[12px]"
-                  disabled={isPending}
-                  autoComplete="off"
-                />
-                <p className="text-[10px] text-muted-foreground/75">
-                  {apiKeyConfigured ? 'API key configured' : 'No API key configured'}
-                  {apiKeyLastUpdatedAt ? ` • Updated ${new Date(apiKeyLastUpdatedAt).toLocaleString()}` : ''}
-                </p>
-                {upstreamApiKeyError ? <p className="text-[11px] text-destructive">{upstreamApiKeyError}</p> : null}
-              </div>
-
               <Collapsible>
                 <CollapsibleTrigger asChild>
                   <Button type="button" variant="outline" className="h-7 rounded-md border-border/55 px-2.5 text-[10px]">
@@ -797,6 +828,33 @@ export function ProjectConfigForm({
                   </Button>
                 </CollapsibleTrigger>
                 <CollapsibleContent className="mt-3 space-y-3">
+                  <div className="rounded-sm border border-amber-300/30 bg-amber-500/10 px-2.5 py-2">
+                    <p className="text-[10px] text-amber-100/90">
+                      Hosted upstream relay is optional and non-default. For production local-first integrations,
+                      keep provider credentials in app code via Dyno fallback adapters.
+                    </p>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-[11px] font-medium text-foreground/90">
+                      Upstream API key (optional hosted relay)
+                    </Label>
+                    <Input
+                      type="password"
+                      value={values.upstreamApiKey}
+                      onChange={(event) =>
+                        setValues((previous) => ({ ...previous, upstreamApiKey: event.target.value }))
+                      }
+                      placeholder={apiKeyConfigured ? 'Enter new key to rotate' : 'Leave empty for app-owned fallback'}
+                      className="h-8 rounded-sm border-border/60 bg-background/60 px-2.5 text-[12px]"
+                      disabled={isPending}
+                      autoComplete="off"
+                    />
+                    <p className="text-[10px] text-muted-foreground/75">
+                      {apiKeyConfigured ? 'Hosted relay API key configured' : 'No hosted relay API key configured'}
+                      {apiKeyLastUpdatedAt ? ` • Updated ${new Date(apiKeyLastUpdatedAt).toLocaleString()}` : ''}
+                    </p>
+                    {upstreamApiKeyError ? <p className="text-[11px] text-destructive">{upstreamApiKeyError}</p> : null}
+                  </div>
                   <div className="space-y-1.5">
                     <Label className="text-[11px] font-medium text-foreground/90">Upstream base URL</Label>
                     <Input
@@ -915,6 +973,14 @@ export function ProjectConfigForm({
             </DialogHeader>
 
             <div className="space-y-3">
+              {!hasEditableRunConditions ? (
+                <div className="rounded-md border border-border/45 bg-background/35 px-2.5 py-2">
+                  <p className="text-[10px] text-muted-foreground/80">
+                    These safeguards are shown for capability transparency and remain read-only until runtime
+                    enforcement is active.
+                  </p>
+                </div>
+              ) : null}
               <div className="grid gap-3 sm:grid-cols-2">
                 <div className="space-y-1.5">
                   <Label className="text-[11px] font-medium text-foreground/90">Battery min percent</Label>
@@ -928,7 +994,7 @@ export function ProjectConfigForm({
                     }
                     placeholder="20"
                     className="h-8 rounded-sm border-border/60 bg-background/60 px-2.5 text-[12px]"
-                    disabled={isPending}
+                    disabled={isPending || !batteryMinPercentEditable}
                   />
                   <p className="text-[10px] text-muted-foreground/70">Minimum battery level required to run.</p>
                   {batteryError ? <p className="text-[11px] text-destructive">{batteryError}</p> : null}
@@ -945,7 +1011,7 @@ export function ProjectConfigForm({
                     }
                     placeholder="30"
                     className="h-8 rounded-sm border-border/60 bg-background/60 px-2.5 text-[12px]"
-                    disabled={isPending}
+                    disabled={isPending || !idleMinSecondsEditable}
                   />
                   <p className="text-[10px] text-muted-foreground/70">
                     Device must be idle for at least this long.
@@ -965,7 +1031,7 @@ export function ProjectConfigForm({
                     onCheckedChange={(checked) =>
                       setValues((previous) => ({ ...previous, wifiOnly: checked }))
                     }
-                    disabled={isPending}
+                    disabled={isPending || !wifiOnlyEditable}
                     aria-label="Wi-Fi only"
                   />
                 </div>
@@ -980,7 +1046,7 @@ export function ProjectConfigForm({
                     onCheckedChange={(checked) =>
                       setValues((previous) => ({ ...previous, requiresCharging: checked }))
                     }
-                    disabled={isPending}
+                    disabled={isPending || !requiresChargingEditable}
                     aria-label="Requires charging"
                   />
                 </div>
@@ -1001,12 +1067,10 @@ export function ProjectConfigForm({
         </Dialog>
 
         {state.status === 'error' && state.message ? (
-          <p className="rounded-sm border border-destructive/30 bg-destructive/10 px-2.5 py-2 text-[11px] text-destructive">
-            {state.message}
-          </p>
+          <ProjectInlineAlert tone="error">{state.message}</ProjectInlineAlert>
         ) : null}
 
-        <div className="rounded-lg border border-border/45 bg-background/25 px-3 py-2.5">
+        <ProjectInsetPanel className="bg-background/25">
           <div className="flex items-center justify-between gap-3">
           <p className="text-[10px] text-muted-foreground/70">
             {hasClientErrors
@@ -1023,8 +1087,8 @@ export function ProjectConfigForm({
             {isPending ? 'Saving...' : 'Save Changes'}
           </Button>
         </div>
-        </div>
+        </ProjectInsetPanel>
       </form>
-    </div>
+    </ProjectSectionShell>
   )
 }

@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/admin'
 import type {
   CreateProjectApiKeyResult,
   CreateProjectInput,
@@ -98,6 +99,22 @@ type ValueSummaryExecutionRow = {
   error_type: string | null
   error_code: string | null
   created_at: string
+}
+
+interface RecordProjectRequestExecutionInput {
+  projectId: string
+  endpoint: string
+  useCase: string | null
+  logicalModel: string | null
+  executionPath: RequestExecutionPath | null
+  executionReason: string | null
+  status: RequestExecutionStatus
+  httpStatus: number | null
+  latencyMs: number | null
+  inputCount: number | null
+  errorType: string | null
+  errorCode: string | null
+  requestId: string | null
 }
 
 function toNullableNonEmptyString(value: string | null | undefined): string | null {
@@ -414,6 +431,81 @@ export async function listProjectValueSummaryExecutions(
   }
 
   return ((data as ValueSummaryExecutionRow[] | null) ?? []).map(mapValueSummaryExecutionRow)
+}
+
+export async function recordProjectRequestExecution(
+  input: RecordProjectRequestExecutionInput,
+): Promise<void> {
+  const { supabase } = await getAuthedSupabase()
+  const adminSupabase = createAdminClient()
+
+  const [projectCheck, tableCheck] = await Promise.all([
+    supabase.from('projects').select('id').eq('id', input.projectId).maybeSingle(),
+    adminSupabase.from('request_executions').select('id').limit(1),
+  ])
+  if (projectCheck.error) {
+    throw formatError('Failed to verify project access', projectCheck.error.message)
+  }
+  if (!projectCheck.data) {
+    throw new Error('Failed to record request execution: project not found or access denied')
+  }
+  if (tableCheck.error) {
+    if (
+      tableCheck.error.code === 'PGRST205' ||
+      tableCheck.error.message.includes("Could not find the table 'public.request_executions'")
+    ) {
+      return
+    }
+    throw formatError('Failed to verify request execution table', tableCheck.error.message)
+  }
+
+  if (input.requestId) {
+    const { data: existing, error: existingError } = await adminSupabase
+      .from('request_executions')
+      .select('id')
+      .eq('project_id', input.projectId)
+      .eq('request_id', input.requestId)
+      .limit(1)
+    if (existingError) {
+      if (
+        existingError.code === 'PGRST205' ||
+        existingError.message.includes("Could not find the table 'public.request_executions'")
+      ) {
+        return
+      }
+      throw formatError('Failed to query existing request execution', existingError.message)
+    }
+    if ((existing ?? []).length > 0) {
+      return
+    }
+  }
+
+  const { error } = await adminSupabase.from('request_executions').insert({
+    project_id: input.projectId,
+    api_key_id: null,
+    endpoint: input.endpoint,
+    use_case: input.useCase,
+    logical_model: input.logicalModel,
+    execution_path: input.executionPath,
+    execution_reason: input.executionReason,
+    status: input.status,
+    http_status: input.httpStatus,
+    latency_ms: input.latencyMs,
+    input_count: input.inputCount,
+    error_type: input.errorType,
+    error_code: input.errorCode,
+    request_id: input.requestId,
+  })
+
+  if (error) {
+    if (
+      error.code === 'PGRST205' ||
+      error.message.includes("Could not find the table 'public.request_executions'")
+    ) {
+      return
+    }
+    throw formatError('Failed to record request execution', error.message)
+  }
 }
 
 export async function createProjectApiKey(

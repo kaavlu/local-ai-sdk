@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
   DemoProjectConfig,
-} from '@dyno/sdk-ts/demo';
+} from '@dynosdk/ts/demo';
 
 type EmbedPurpose = 'index' | 'search';
 
@@ -10,6 +10,13 @@ export type BackendStatus = {
   backendLabel: string;
   statusLine: string;
   details: string[];
+  runtimeState?: string;
+  runtimeLastError?: string | null;
+  runtimeSource?: string;
+  runtimeVersion?: string | null;
+  generationModelState?: 'not_loaded' | 'loading' | 'ready' | 'failed';
+  generationWarmupState?: 'idle' | 'warming' | 'ready' | 'failed';
+  generationWarmupLastError?: string | null;
   model?: string;
   executionPolicy?: string;
   localMode?: string;

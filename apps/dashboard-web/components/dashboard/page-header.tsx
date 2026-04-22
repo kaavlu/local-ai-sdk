@@ -1,15 +1,13 @@
+import type { ReactNode } from 'react'
+import { DashboardPageHeader } from '@/components/dashboard/surface-primitives'
+
 interface PageHeaderProps {
   title: string
   description?: string
+  action?: ReactNode
+  eyebrow?: string
 }
 
-export function PageHeader({ title, description }: PageHeaderProps) {
-  return (
-    <div className="mb-6">
-      <h1 className="text-[15px] font-semibold text-foreground tracking-tight">{title}</h1>
-      {description && (
-        <p className="text-[12px] text-muted-foreground/80 mt-1">{description}</p>
-      )}
-    </div>
-  )
+export function PageHeader({ title, description, action, eyebrow }: PageHeaderProps) {
+  return <DashboardPageHeader title={title} description={description} action={action} eyebrow={eyebrow} />
 }

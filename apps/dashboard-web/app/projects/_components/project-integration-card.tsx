@@ -4,19 +4,19 @@ import type { ReactNode } from 'react'
 import { useMemo, useState } from 'react'
 import { Check, Copy } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { ProjectSectionShell } from '@/app/projects/_components/project-detail-primitives'
+import {
+  ProjectInsetPanel,
+  ProjectSectionShell,
+} from '@/app/projects/_components/project-detail-primitives'
 import { cn } from '@/lib/utils'
 
 interface ProjectIntegrationCardProps {
   sdkSnippet: string
-  baseUrl: string
-  openAiSnippet: string
-  curlSnippet: string
   hasApiKeys: boolean
   className?: string
 }
 
-type CopyTarget = 'sdkSnippet' | 'baseUrl' | 'openAiSnippet' | 'curlSnippet'
+type CopyTarget = 'sdkSnippet'
 type CodeLanguage = 'typescript' | 'shell'
 
 const TS_KEYWORDS = new Set([
@@ -41,7 +41,7 @@ const TS_KEYWORDS = new Set([
 function renderHighlightedCode(code: string, language: CodeLanguage): ReactNode {
   const lines = code.split('\n')
   return (
-    <div className="overflow-x-auto rounded-b-lg bg-[#050712] px-3 py-2.5 font-mono text-[12px] leading-7">
+    <div className="overflow-x-auto rounded-b-md bg-background/90 px-3 py-2 font-mono text-[12px] leading-6">
       {lines.map((line, index) => (
         <div key={`${language}-${index}`} className="grid grid-cols-[2ch_1fr] gap-4 whitespace-pre">
           <span className="select-none text-right text-[#5c6177]">{index + 1}</span>
@@ -61,7 +61,7 @@ function tokenizeCodeLine(line: string, language: CodeLanguage, lineIndex: numbe
   while ((match = pattern.exec(line)) !== null) {
     if (match.index > cursor) {
       tokens.push(
-        <span key={`text-${lineIndex}-${cursor}`} className="text-[#d6def8]">
+        <span key={`text-${lineIndex}-${cursor}`} className="text-foreground/90">
           {line.slice(cursor, match.index)}
         </span>,
       )
@@ -76,14 +76,14 @@ function tokenizeCodeLine(line: string, language: CodeLanguage, lineIndex: numbe
   }
   if (cursor < line.length) {
     tokens.push(
-      <span key={`tail-${lineIndex}-${cursor}`} className="text-[#d6def8]">
+      <span key={`tail-${lineIndex}-${cursor}`} className="text-foreground/90">
         {line.slice(cursor)}
       </span>,
     )
   }
   if (!tokens.length) {
     tokens.push(
-      <span key={`empty-${lineIndex}`} className="text-[#d6def8]">
+      <span key={`empty-${lineIndex}`} className="text-foreground/90">
         {' '}
       </span>,
     )
@@ -92,21 +92,18 @@ function tokenizeCodeLine(line: string, language: CodeLanguage, lineIndex: numbe
 }
 
 function getTokenClass(token: string, language: CodeLanguage): string {
-  if (token.startsWith('//') || token.startsWith('#')) return 'text-[#6e738a] italic'
-  if (token.startsWith('"') || token.startsWith("'") || token.startsWith('`')) return 'text-[#84b8ff]'
-  if (/^\d+(\.\d+)?$/.test(token)) return 'text-[#ff9f66]'
-  if (language === 'shell' && /^--?[A-Za-z-]+$/.test(token)) return 'text-[#ff9f66]'
-  if (language === 'shell' && token.startsWith('$')) return 'text-[#c792ea]'
-  if (language === 'typescript' && TS_KEYWORDS.has(token)) return 'text-[#c792ea]'
-  if (language === 'typescript' && /^[A-Z]/.test(token)) return 'text-[#82aaff]'
-  return 'text-[#d6def8]'
+  if (token.startsWith('//') || token.startsWith('#')) return 'text-muted-foreground/75 italic'
+  if (token.startsWith('"') || token.startsWith("'") || token.startsWith('`')) return 'text-foreground/85'
+  if (/^\d+(\.\d+)?$/.test(token)) return 'text-primary/80'
+  if (language === 'shell' && /^--?[A-Za-z-]+$/.test(token)) return 'text-primary/80'
+  if (language === 'shell' && token.startsWith('$')) return 'text-primary/90'
+  if (language === 'typescript' && TS_KEYWORDS.has(token)) return 'text-primary/90'
+  if (language === 'typescript' && /^[A-Z]/.test(token)) return 'text-foreground'
+  return 'text-foreground/90'
 }
 
 export function ProjectIntegrationCard({
   sdkSnippet,
-  baseUrl,
-  openAiSnippet,
-  curlSnippet,
   hasApiKeys,
   className,
 }: ProjectIntegrationCardProps) {
@@ -129,13 +126,13 @@ export function ProjectIntegrationCard({
   return (
     <ProjectSectionShell
       title="Integration"
-      description="Primary path: @dyno/sdk-ts GA methods (`Dyno.init`, `embedText`/`embedTexts`, `getStatus`, `shutdown`) with local-first execution. Below: optional OpenAI-compatible HTTP API for sandbox, demos, and tooling."
+      description="Primary path: @dynosdk/ts GA methods (`Dyno.init`, `embedText`/`embedTexts`, `getStatus`, `shutdown`) with local-first execution."
       className={cn(className)}
     >
       <div className="space-y-3">
-        <div className="rounded-lg border border-border/45 bg-background/35">
+        <ProjectInsetPanel className="p-0">
           <div className="flex items-center justify-between border-b border-border/45 px-3 py-2">
-            <p className="font-mono text-[10px] text-muted-foreground/80">TypeScript (@dyno/sdk-ts)</p>
+            <p className="font-mono text-[10px] text-muted-foreground/80">TypeScript (@dynosdk/ts)</p>
             <Button
               type="button"
               variant="outline"
@@ -147,79 +144,15 @@ export function ProjectIntegrationCard({
             </Button>
           </div>
           {renderHighlightedCode(sdkSnippet, 'typescript')}
-        </div>
+        </ProjectInsetPanel>
 
-        <div className="rounded-lg border border-border/45 bg-background/30 px-3 py-2.5">
+        <ProjectInsetPanel>
           <p className="text-[10px] uppercase tracking-wide text-muted-foreground/75">Authentication</p>
           <p className="mt-1 text-[11px] text-foreground/90">
-            For the GA SDK path, set DYNO_PROJECT_API_KEY.
-            {' '}DYNO_API_KEY below is only for the optional hosted OpenAI-compatible snippets.
+            Set DYNO_PROJECT_API_KEY for SDK requests.
             {hasNoApiKeys ? ' No active keys exist yet, so requests will fail authentication until you create one.' : ''}
           </p>
-        </div>
-
-        <div className="rounded-lg border border-border/45 bg-background/30 px-3 py-2.5">
-          <p className="text-[10px] uppercase tracking-wide text-muted-foreground/75">Optional hosted compatibility</p>
-          <p className="mt-1 text-[11px] text-foreground/90">
-            Use these OpenAI-compatible snippets only for sandbox, demos, or tooling compatibility checks.
-          </p>
-        </div>
-
-        <div className="rounded-lg border border-border/45 bg-background/35 px-3 py-2.5">
-          <div className="mb-1 flex items-center justify-between gap-2">
-            <p className="text-[11px] font-medium text-foreground/90">Base URL</p>
-            <Button
-              type="button"
-              variant="outline"
-              className="h-6 rounded-md border-border/55 px-2 text-[10px]"
-              onClick={() => void handleCopy(baseUrl, 'baseUrl')}
-            >
-              {copiedTarget === 'baseUrl' ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
-              <span className="ml-1">{copiedTarget === 'baseUrl' ? 'Copied' : 'Copy'}</span>
-            </Button>
-          </div>
-          <code title={baseUrl} className="block truncate font-mono text-[11px] text-foreground/90">
-            {baseUrl}
-          </code>
-        </div>
-
-        <div className="rounded-lg border border-border/45 bg-background/35">
-          <div className="flex items-center justify-between border-b border-border/45 px-3 py-2">
-            <p className="font-mono text-[10px] text-muted-foreground/80">
-              TypeScript (OpenAI SDK, optional)
-            </p>
-            <Button
-              type="button"
-              variant="outline"
-              className="h-6 rounded-md border-border/55 px-2 text-[10px]"
-              onClick={() => void handleCopy(openAiSnippet, 'openAiSnippet')}
-            >
-              {copiedTarget === 'openAiSnippet' ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
-              <span className="ml-1">{copiedTarget === 'openAiSnippet' ? 'Copied' : 'Copy'}</span>
-            </Button>
-          </div>
-          {renderHighlightedCode(openAiSnippet, 'typescript')}
-        </div>
-
-        <div className="rounded-lg border border-border/45 bg-background/35">
-          <div className="flex items-center justify-between border-b border-border/45 px-3 py-2">
-            <p className="font-mono text-[10px] text-muted-foreground/80">cURL (optional)</p>
-            <Button
-              type="button"
-              variant="outline"
-              className="h-6 rounded-md border-border/55 px-2 text-[10px]"
-              onClick={() => void handleCopy(curlSnippet, 'curlSnippet')}
-            >
-              {copiedTarget === 'curlSnippet' ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
-              <span className="ml-1">{copiedTarget === 'curlSnippet' ? 'Copied' : 'Copy'}</span>
-            </Button>
-          </div>
-          {renderHighlightedCode(curlSnippet, 'shell')}
-        </div>
-
-        <p className="text-[10px] text-muted-foreground/72">
-          Local vs cloud execution is decided in the SDK/runtime on the user&apos;s device. Low-level runtime client calls are advanced/internal; the default contract is the GA SDK surface shown above.
-        </p>
+        </ProjectInsetPanel>
       </div>
     </ProjectSectionShell>
   )

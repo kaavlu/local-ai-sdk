@@ -3,6 +3,10 @@ import { mapStrategyPresetToScheduling, type ProjectConfig, type ProjectConfigPr
 import { ManagedProjectConfigProvider, type ManagedResolverErrorCode } from './demo-http-config-provider.js';
 import { getModeReadinessFlag, supportsReadinessProbe } from './runtime-manager.js';
 import type { HealthResponse, LocalMode, RuntimeManager } from './types.js';
+import { createHash } from 'node:crypto';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 
 export type ExecutionDecision = 'local' | 'cloud';
 
@@ -28,9 +32,9 @@ export type EmbeddingsExecutionReason =
   | 'invalid_project_use_case';
 
 export interface TelemetryEvent {
-  eventType: 'embeddings_execution' | 'embeddings_batch_execution';
+  eventType: 'embeddings_execution' | 'embeddings_batch_execution' | 'generate_text_execution';
   projectId: string;
-  useCase: 'embeddings';
+  useCase: 'embeddings' | 'text_generation';
   decision: ExecutionDecision | 'mixed';
   reason: EmbeddingsExecutionReason | 'batch_completed' | 'batch_partial_failure' | 'batch_failed';
   reasonCategory: EmbeddingsReasonCategory;
@@ -70,12 +74,37 @@ export interface ProjectConfigCacheOptions {
   ttlMs?: number;
   allowStaleOnError?: boolean;
   maxStaleMs?: number;
+  /**
+   * Cache persistence backend.
+   * - `memory` (default): current-process LKG only.
+   * - `disk`: durable LKG for process restart resilience (Node runtime only).
+   */
+  persistence?: 'memory' | 'disk';
+  /**
+   * Optional directory override for durable cache files.
+   * If omitted, `DYNO_PROJECT_CONFIG_CACHE_DIR` is used when set, otherwise
+   * `${os.homedir()}/.dyno/project-config-cache`.
+   */
+  diskPath?: string;
+  /**
+   * Internal scope key included in cache key derivation.
+   * Managed onboarding uses resolver origin to avoid cross-resolver collisions.
+   */
+  cacheNamespace?: string;
+  /**
+   * Cache record schema/version marker for future invalidation.
+   */
+  cacheSchemaVersion?: string;
 }
 
 export class CachedProjectConfigProvider implements ProjectConfigProvider {
   private readonly ttlMs: number;
   private readonly allowStaleOnError: boolean;
   private readonly maxStaleMs: number;
+  private readonly persistence: 'memory' | 'disk';
+  private readonly diskPath: string;
+  private readonly cacheNamespace: string;
+  private readonly cacheSchemaVersion: string;
   private readonly cache = new Map<string, { config: ProjectConfig; loadedAt: number }>();
 
   constructor(
@@ -85,6 +114,10 @@ export class CachedProjectConfigProvider implements ProjectConfigProvider {
     this.ttlMs = Math.max(0, options?.ttlMs ?? 30_000);
     this.allowStaleOnError = options?.allowStaleOnError ?? true;
     this.maxStaleMs = Math.max(0, options?.maxStaleMs ?? 10 * 60_000);
+    this.persistence = options?.persistence ?? 'memory';
+    this.diskPath = resolveProjectConfigCacheDir(options?.diskPath);
+    this.cacheNamespace = normalizeCacheNamespace(options?.cacheNamespace);
+    this.cacheSchemaVersion = normalizeCacheSchemaVersion(options?.cacheSchemaVersion);
   }
 
   async loadProjectConfig(projectId: string): Promise<ProjectConfig> {
@@ -98,15 +131,24 @@ export class CachedProjectConfigProvider implements ProjectConfigProvider {
       // Explicit no-cache mode: cold-start failures should fail fast.
       return this.provider.loadProjectConfig(normalizedProjectId);
     }
-    const cached = this.cache.get(normalizedProjectId);
+    let cached = this.cache.get(normalizedProjectId);
+    if (!cached) {
+      cached = await this.readDiskCache(normalizedProjectId);
+      if (cached) {
+        this.cache.set(normalizedProjectId, cached);
+      }
+    }
     if (cached && now - cached.loadedAt <= this.ttlMs) {
       return cached.config;
     }
 
     try {
       const config = await this.provider.loadProjectConfig(normalizedProjectId);
-      this.cache.set(normalizedProjectId, { config, loadedAt: now });
-      return config;
+      const sanitizedConfig = sanitizeProjectConfigForCache(config);
+      const nextCached = { config: sanitizedConfig, loadedAt: now };
+      this.cache.set(normalizedProjectId, nextCached);
+      await this.writeDiskCache(normalizedProjectId, nextCached);
+      return sanitizedConfig;
     } catch (error) {
       if (cached && this.allowStaleOnError && now - cached.loadedAt <= this.maxStaleMs) {
         return cached.config;
@@ -124,6 +166,182 @@ export class CachedProjectConfigProvider implements ProjectConfigProvider {
         }`,
       );
     }
+  }
+
+  private async readDiskCache(
+    projectId: string,
+  ): Promise<{ config: ProjectConfig; loadedAt: number } | undefined> {
+    if (this.persistence !== 'disk') {
+      return undefined;
+    }
+    try {
+      const raw = await fs.readFile(this.getDiskCacheFilePath(projectId), 'utf8');
+      const parsed = JSON.parse(raw) as DiskCacheRecord;
+      if (!isValidDiskCacheRecord(parsed)) {
+        return undefined;
+      }
+      if (
+        parsed.version !== DISK_CACHE_RECORD_VERSION ||
+        parsed.cacheSchemaVersion !== this.cacheSchemaVersion ||
+        parsed.cacheNamespace !== this.cacheNamespace ||
+        parsed.projectId !== projectId
+      ) {
+        return undefined;
+      }
+      return {
+        config: parsed.config,
+        loadedAt: parsed.loadedAt,
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '';
+      if (message.includes('ENOENT')) {
+        return undefined;
+      }
+      return undefined;
+    }
+  }
+
+  private async writeDiskCache(
+    projectId: string,
+    cached: { config: ProjectConfig; loadedAt: number },
+  ): Promise<void> {
+    if (this.persistence !== 'disk') {
+      return;
+    }
+    const filePath = this.getDiskCacheFilePath(projectId);
+    const parentDir = path.dirname(filePath);
+    const payload: DiskCacheRecord = {
+      version: DISK_CACHE_RECORD_VERSION,
+      cacheSchemaVersion: this.cacheSchemaVersion,
+      cacheNamespace: this.cacheNamespace,
+      projectId,
+      loadedAt: cached.loadedAt,
+      config: cached.config,
+    };
+    try {
+      await fs.mkdir(parentDir, { recursive: true });
+      const tempFilePath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+      await fs.writeFile(tempFilePath, JSON.stringify(payload), 'utf8');
+      await fs.rename(tempFilePath, filePath);
+    } catch {
+      // Durable cache is best-effort; in-memory cache remains authoritative in-process.
+    }
+  }
+
+  private getDiskCacheFilePath(projectId: string): string {
+    const key = `${this.cacheSchemaVersion}:${this.cacheNamespace}:${projectId}`;
+    const hashed = createHash('sha256').update(key).digest('hex');
+    return path.join(this.diskPath, `${hashed}.json`);
+  }
+}
+
+const DISK_CACHE_RECORD_VERSION = 'dyno-project-config-cache-v1';
+const DEFAULT_RESOLVER_ORIGIN = 'http://127.0.0.1:3000';
+const DEFAULT_CACHE_NAMESPACE = 'resolver:unknown';
+
+interface DiskCacheRecord {
+  version: string;
+  cacheSchemaVersion: string;
+  cacheNamespace: string;
+  projectId: string;
+  loadedAt: number;
+  config: ProjectConfig;
+}
+
+function resolveProjectConfigCacheDir(explicitPath: string | undefined): string {
+  const fromOptions = explicitPath?.trim();
+  if (fromOptions) {
+    return path.resolve(fromOptions);
+  }
+  const fromEnv = process.env.DYNO_PROJECT_CONFIG_CACHE_DIR?.trim();
+  if (fromEnv) {
+    return path.resolve(fromEnv);
+  }
+  return path.join(os.homedir(), '.dyno', 'project-config-cache');
+}
+
+function normalizeCacheNamespace(cacheNamespace: string | undefined): string {
+  const value = cacheNamespace?.trim();
+  if (value) {
+    return value;
+  }
+  return DEFAULT_CACHE_NAMESPACE;
+}
+
+function normalizeCacheSchemaVersion(cacheSchemaVersion: string | undefined): string {
+  const value = cacheSchemaVersion?.trim();
+  if (value) {
+    return value;
+  }
+  return DISK_CACHE_RECORD_VERSION;
+}
+
+function sanitizeProjectConfigForCache(config: ProjectConfig): ProjectConfig {
+  return {
+    projectId: String(config.projectId),
+    use_case_type: String(config.use_case_type),
+    strategy_preset: config.strategy_preset,
+    local_model: config.local_model,
+    cloud_model: config.cloud_model,
+    fallback_enabled: config.fallback_enabled,
+    requires_charging: Boolean(config.requires_charging),
+    wifi_only: Boolean(config.wifi_only),
+    battery_min_percent:
+      typeof config.battery_min_percent === 'number' || config.battery_min_percent === null
+        ? config.battery_min_percent
+        : null,
+    idle_min_seconds:
+      typeof config.idle_min_seconds === 'number' || config.idle_min_seconds === null
+        ? config.idle_min_seconds
+        : null,
+  };
+}
+
+function isValidDiskCacheRecord(value: unknown): value is DiskCacheRecord {
+  if (value == null || typeof value !== 'object' || Array.isArray(value)) {
+    return false;
+  }
+  const root = value as Record<string, unknown>;
+  if (
+    typeof root.version !== 'string' ||
+    typeof root.cacheSchemaVersion !== 'string' ||
+    typeof root.cacheNamespace !== 'string' ||
+    typeof root.projectId !== 'string' ||
+    typeof root.loadedAt !== 'number'
+  ) {
+    return false;
+  }
+  return isValidProjectConfigShape(root.config);
+}
+
+function isValidProjectConfigShape(value: unknown): value is ProjectConfig {
+  if (value == null || typeof value !== 'object' || Array.isArray(value)) {
+    return false;
+  }
+  const root = value as Record<string, unknown>;
+  const isNullableString = (entry: unknown): boolean => entry === null || typeof entry === 'string';
+  const isNullableNumber = (entry: unknown): boolean => entry === null || typeof entry === 'number';
+  const isOptionalBoolean = (entry: unknown): boolean => entry === undefined || typeof entry === 'boolean';
+  return (
+    typeof root.projectId === 'string' &&
+    typeof root.use_case_type === 'string' &&
+    typeof root.strategy_preset === 'string' &&
+    isNullableString(root.local_model) &&
+    isNullableString(root.cloud_model) &&
+    isOptionalBoolean(root.fallback_enabled) &&
+    typeof root.requires_charging === 'boolean' &&
+    typeof root.wifi_only === 'boolean' &&
+    isNullableNumber(root.battery_min_percent) &&
+    isNullableNumber(root.idle_min_seconds)
+  );
+}
+
+function resolveManagedResolverOrigin(configResolverUrl?: string): string {
+  const resolved = configResolverUrl?.trim() || process.env.DYNO_CONFIG_RESOLVER_URL?.trim() || DEFAULT_RESOLVER_ORIGIN;
+  try {
+    return new URL(resolved).origin;
+  } catch {
+    return resolved.replace(/\/+$/, '') || DEFAULT_RESOLVER_ORIGIN;
   }
 }
 
@@ -312,7 +530,10 @@ export class DynoEmbeddingsRuntime {
       });
       this.projectConfigProvider = new CachedProjectConfigProvider(
         managedProvider,
-        options.projectConfigCache,
+        {
+          ...options.projectConfigCache,
+          cacheNamespace: options.projectConfigCache?.cacheNamespace ?? resolveManagedResolverOrigin(options.configResolverUrl),
+        },
       );
     }
     this.localTimeoutMs = Math.max(1000, options.localTimeoutMs ?? 60_000);

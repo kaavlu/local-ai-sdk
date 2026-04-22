@@ -1,103 +1,173 @@
-import { Badge } from '@/components/ui/badge'
-import { ProjectSectionShell, ProjectStatTile } from '@/app/projects/_components/project-detail-primitives'
+'use client'
+
+import { useEffect, useState } from 'react'
+import { ArrowRight, CheckCircle2, ChevronDown, ChevronUp, Circle, CircleSlash } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import {
+  ProjectInlineAlert,
+  ProjectInsetPanel,
+  ProjectSectionShell,
+  ProjectStatusBadge,
+} from '@/app/projects/_components/project-detail-primitives'
 import type { ProjectPageViewModel } from '@/lib/data/project-page-view-model'
 
 interface ProjectSetupSummaryCardProps {
   summary: ProjectPageViewModel
 }
 
-function formatDate(value: string): string {
-  return new Date(value).toLocaleString()
-}
-
-function formatStatusText(value: boolean, positive = 'Yes', negative = 'No'): string {
-  return value ? positive : negative
+function getStatusPresentation(status: ProjectPageViewModel['setupJourney']['steps'][number]['status']) {
+  if (status === 'done') {
+    return {
+      icon: <CheckCircle2 className="h-4 w-4 text-emerald-400" />,
+      badge: <ProjectStatusBadge tone="success">Done</ProjectStatusBadge>,
+    }
+  }
+  if (status === 'ready') {
+    return {
+      icon: <Circle className="h-4 w-4 text-blue-300" />,
+      badge: <ProjectStatusBadge tone="neutral">Ready</ProjectStatusBadge>,
+    }
+  }
+  if (status === 'blocked') {
+    return {
+      icon: <CircleSlash className="h-4 w-4 text-amber-300" />,
+      badge: <ProjectStatusBadge tone="warning">Blocked</ProjectStatusBadge>,
+    }
+  }
+  return {
+    icon: <Circle className="h-4 w-4 text-muted-foreground/60" />,
+    badge: <ProjectStatusBadge tone="neutral">Todo</ProjectStatusBadge>,
+  }
 }
 
 export function ProjectSetupSummaryCard({ summary }: ProjectSetupSummaryCardProps) {
-  const { health, guidance, config } = summary
+  const { setupJourney } = summary
+  const [collapsed, setCollapsed] = useState(setupJourney.allComplete)
+
+  useEffect(() => {
+    if (setupJourney.allComplete) {
+      setCollapsed(true)
+    }
+  }, [setupJourney.allComplete])
+
+  const scrollToSection = (actionHref: string) => {
+    const targetId = actionHref.replace(/^#/, '')
+    if (!targetId) {
+      return
+    }
+    const target = document.getElementById(targetId)
+    if (!target) {
+      return
+    }
+    target.scrollIntoView({
+      behavior: 'smooth',
+      block: 'start',
+    })
+    window.history.replaceState(null, '', `#${targetId}`)
+  }
 
   return (
     <ProjectSectionShell
-      title="Setup & Health"
-      description="Quick status for configuration/auth readiness. Operational local-first outcomes are shown in the Local-first Signals card."
+      title="First Success Journey"
+      description={
+        setupJourney.allComplete
+          ? 'Succeeded. Collapse this card and keep working.'
+          : 'Follow this sequence to reach your first successful Dyno request.'
+      }
       action={
-        <Badge
-          variant={health.readyForRequests ? 'secondary' : 'destructive'}
-          className="rounded-md px-2 py-0.5 text-[10px]"
-        >
-          {health.readyForRequests ? 'Ready for requests' : 'Setup needed'}
-        </Badge>
+        <div className="flex items-center gap-1.5">
+          <ProjectStatusBadge tone={setupJourney.allComplete ? 'success' : 'neutral'}>
+            {setupJourney.allComplete
+              ? 'Succeeded'
+              : `${setupJourney.completedCount}/${setupJourney.totalCount} required steps`}
+          </ProjectStatusBadge>
+          <Button
+            type="button"
+            variant="outline"
+            className="h-6 rounded-md border-border/55 px-2 text-[10px]"
+            onClick={() => setCollapsed((value) => !value)}
+          >
+            {collapsed ? (
+              <>
+                Expand
+                <ChevronDown className="ml-1 h-3.5 w-3.5" />
+              </>
+            ) : (
+              <>
+                Collapse
+                <ChevronUp className="ml-1 h-3.5 w-3.5" />
+              </>
+            )}
+          </Button>
+        </div>
       }
     >
-      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-        <ProjectStatTile label="Fallback configured" value={formatStatusText(health.fallbackConfigured)} />
-        <ProjectStatTile
-          label="Upstream API key configured"
-          value={formatStatusText(health.upstreamApiKeyConfigured)}
-        />
-        <ProjectStatTile label="Active Dyno API keys" value={health.activeApiKeyCount} />
-        <ProjectStatTile
-          label="Recent success rate"
-          value={
-            health.recentRequestCount > 0
-              ? `${Math.round((health.recentSuccessCount / health.recentRequestCount) * 100)}%`
-              : '—'
-          }
-        />
+      {collapsed ? (
+        <ProjectInlineAlert tone="success">
+          <p className="flex items-center gap-1.5 text-xs font-medium text-foreground">
+            <CheckCircle2 className="h-4 w-4 text-emerald-300" />
+            First success journey succeeded.
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground/85">
+            You can re-open this checklist anytime from the Expand button.
+          </p>
+        </ProjectInlineAlert>
+      ) : (
+        <>
+      <div className="space-y-2">
+        {setupJourney.steps.map((step, index) => {
+          const statusPresentation = getStatusPresentation(step.status)
+          return (
+            <div
+              key={step.key}
+              className="rounded-md border border-border/50 bg-background/30 px-3 py-2"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-start gap-2">
+                  <span className="mt-0.5">{statusPresentation.icon}</span>
+                  <div>
+                    <p className="text-[11px] font-medium text-foreground">
+                      {index + 1}. {step.title}{' '}
+                      {step.optional ? <span className="text-muted-foreground/75">(optional)</span> : null}
+                    </p>
+                    <p className="mt-0.5 text-[11px] text-muted-foreground/85">{step.description}</p>
+                    {step.blockerReason ? (
+                      <p className="mt-1 text-[10px] text-amber-200/90">{step.blockerReason}</p>
+                    ) : null}
+                  </div>
+                </div>
+                {statusPresentation.badge}
+              </div>
+              {(step.status === 'blocked' || step.status === 'ready' || step.status === 'todo') && step.actionHref ? (
+                <div className="mt-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-7 rounded-md border-border/55 px-2.5 text-[10px] font-medium"
+                    onClick={() => scrollToSection(step.actionHref)}
+                  >
+                    {step.actionLabel}
+                    <ArrowRight className="ml-1 h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              ) : null}
+            </div>
+          )
+        })}
       </div>
 
-      <div className="mt-2 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-        <ProjectStatTile
-          label="Recent requests"
-          value={health.recentRequestCount > 0 ? health.recentRequestCount : 'No requests yet'}
-          valueClassName="text-[13px]"
-        />
-        <ProjectStatTile
-          label="Last request status"
-          value={health.lastRequest ? (health.lastRequest.status === 'success' ? 'Success' : 'Error') : '—'}
-          className="border-border/50"
-        />
-        <ProjectStatTile
-          label="Last execution path"
-          value={<span className="capitalize">{health.lastRequest?.executionPath ?? '—'}</span>}
-        />
-        <ProjectStatTile
-          label="Last request time"
-          value={health.lastRequest ? formatDate(health.lastRequest.createdAt) : '—'}
-          valueClassName="text-[12px] leading-tight"
-        />
-      </div>
-
-      <div className="mt-3 rounded-lg border border-border/45 bg-background/30 px-3 py-2.5">
-        <p className="text-[10px] uppercase tracking-wide text-muted-foreground/75">Next step</p>
-        {guidance.needsFallbackSetup ? (
-          <p className="mt-1 text-[11px] text-foreground/90">
-            Cloud fallback is enabled but incomplete. Add an upstream base URL and model in Runtime Configuration.
-          </p>
-        ) : guidance.needsDynoApiKey ? (
-          <p className="mt-1 text-[11px] text-foreground/90">
-            No Dyno API key exists yet. Create one below before sending authenticated requests.
-          </p>
-        ) : guidance.hasRecentFailures ? (
-          <p className="mt-1 text-[11px] text-foreground/90">
-            Recent errors detected. Check the latest request entries for execution path and status details.
-          </p>
-        ) : guidance.hasNoRequests ? (
-          <p className="mt-1 text-[11px] text-foreground/90">
-            Setup is ready. Use the SDK integration snippet below to initialize Dyno and send your first request. Runtime lifecycle is managed by the SDK by default. Use the OpenAI-compatible snippet only for hosted compatibility testing.
-          </p>
+      <ProjectInsetPanel className="mt-3">
+        <p className="text-[10px] uppercase tracking-wide text-muted-foreground/75">Completion</p>
+        {setupJourney.allComplete && setupJourney.completionMessage ? (
+          <p className="mt-1 text-[11px] text-foreground/90">{setupJourney.completionMessage}</p>
         ) : (
           <p className="mt-1 text-[11px] text-foreground/90">
-            Dyno is configured and receiving traffic for this project.
+            Complete all required steps above, then send one successful request to finish first-success onboarding.
           </p>
         )}
-        {config?.fallback_enabled ? (
-          <p className="mt-1 text-[10px] text-muted-foreground/80">
-            Recent path split: local {health.localExecutionCount} / cloud {health.cloudExecutionCount}.
-          </p>
-        ) : null}
-      </div>
+      </ProjectInsetPanel>
+        </>
+      )}
     </ProjectSectionShell>
   )
 }

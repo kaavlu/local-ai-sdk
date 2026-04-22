@@ -1,0 +1,2 @@
+Archived output artifact from historical Step 13 verification.
+Source transcript was moved out of the active `scripts/` root to reduce clutter.

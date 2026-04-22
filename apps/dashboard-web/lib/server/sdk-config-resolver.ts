@@ -1,9 +1,11 @@
 import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { verifyApiKey } from '@/lib/server/api-keys'
+import { decryptSecret } from '@/lib/server/secrets'
 
 const KEY_PREFIX_LENGTH = 20
 const BEARER_SCHEME = 'bearer '
+const ENABLE_UPSTREAM_KEY_RELAY_ENV = 'DYNO_ENABLE_HOSTED_UPSTREAM_KEY_RELAY'
 
 type ProjectApiKeyRow = {
   id: string
@@ -22,7 +24,12 @@ type ProjectConfigRow = {
   project_id: string
   local_model: string | null
   cloud_model: string | null
+  logical_model: string | null
   fallback_enabled: boolean
+  upstream_provider_type: string | null
+  upstream_base_url: string | null
+  upstream_model: string | null
+  upstream_api_key_encrypted: string | null
   requires_charging: boolean
   wifi_only: boolean
   battery_min_percent: number | null
@@ -39,6 +46,11 @@ function extractBearerToken(request: Request): string {
     return ''
   }
   return authorization.slice(BEARER_SCHEME.length).trim()
+}
+
+function shouldIncludeUpstreamApiKeyInResolverResponse(): boolean {
+  const raw = process.env[ENABLE_UPSTREAM_KEY_RELAY_ENV]?.trim().toLowerCase()
+  return raw === '1' || raw === 'true' || raw === 'yes'
 }
 
 export async function handleSdkConfigRequest(request: Request) {
@@ -86,7 +98,7 @@ export async function handleSdkConfigRequestWithClient(
       supabase
         .from('project_configs')
         .select(
-          'project_id, local_model, cloud_model, fallback_enabled, requires_charging, wifi_only, battery_min_percent, idle_min_seconds',
+          'project_id, local_model, cloud_model, logical_model, fallback_enabled, upstream_provider_type, upstream_base_url, upstream_model, upstream_api_key_encrypted, requires_charging, wifi_only, battery_min_percent, idle_min_seconds',
         )
         .eq('project_id', matchingKey.project_id)
         .maybeSingle<ProjectConfigRow>(),
@@ -110,12 +122,23 @@ export async function handleSdkConfigRequestWithClient(
       return NextResponse.json({ error: 'not_found', code: 'project_config_not_found' }, { status: 404 })
     }
 
+    const includeUpstreamApiKey = shouldIncludeUpstreamApiKeyInResolverResponse()
+    const decryptedUpstreamApiKey =
+      includeUpstreamApiKey && configResult.data.upstream_api_key_encrypted
+        ? decryptSecret(configResult.data.upstream_api_key_encrypted)
+        : null
+
     return NextResponse.json(
       {
         projectId: projectResult.data.id,
         use_case_type: projectResult.data.use_case_type,
         strategy_preset: projectResult.data.strategy_preset,
+        logical_model: configResult.data.logical_model,
         fallback_enabled: configResult.data.fallback_enabled,
+        upstream_provider_type: configResult.data.upstream_provider_type,
+        upstream_base_url: configResult.data.upstream_base_url,
+        upstream_model: configResult.data.upstream_model,
+        ...(includeUpstreamApiKey ? { upstream_api_key: decryptedUpstreamApiKey } : {}),
         local_model: configResult.data.local_model,
         cloud_model: configResult.data.cloud_model,
         requires_charging: configResult.data.requires_charging,

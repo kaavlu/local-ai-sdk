@@ -6,9 +6,11 @@ import { Menu, X } from 'lucide-react'
 import { Logo } from './logo'
 
 const links = [
+  { href: '/#product', label: 'Product' },
+  { href: '/#how-it-works', label: 'How it works' },
   { href: '/pricing', label: 'Pricing' },
   { href: '/docs', label: 'Docs' },
-  { href: 'https://github.com/dyno-labs', label: 'GitHub', external: true },
+  { href: 'https://github.com/kaavlu/local-ai-sdk', label: 'GitHub', external: true },
 ]
 
 export function Nav() {
@@ -41,13 +43,13 @@ export function Nav() {
 
         <div className="hidden items-center gap-3 md:flex">
           <Link
-            href="/docs"
+            href="/docs#quickstart"
             className="rounded-lg border border-border-strong px-4 py-2 text-sm text-foreground-secondary hover:border-foreground-muted hover:text-foreground"
           >
-            View Docs
+            Quickstart
           </Link>
           <Link
-            href="https://dashboard.dyno.dev"
+            href="https://dynodev.vercel.app/signin"
             className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover"
           >
             Get Started
@@ -70,6 +72,9 @@ export function Nav() {
               <Link
                 key={link.href}
                 href={link.href}
+                {...(link.external
+                  ? { target: '_blank', rel: 'noopener noreferrer' }
+                  : {})}
                 onClick={() => setMobileOpen(false)}
                 className="text-sm text-foreground-secondary hover:text-foreground"
               >
@@ -78,13 +83,15 @@ export function Nav() {
             ))}
             <div className="mt-2 flex flex-col gap-3">
               <Link
-                href="/docs"
+                href="/docs#quickstart"
+                onClick={() => setMobileOpen(false)}
                 className="rounded-lg border border-border-strong px-4 py-2.5 text-center text-sm text-foreground-secondary hover:text-foreground"
               >
-                View Docs
+                Quickstart
               </Link>
               <Link
-                href="https://dashboard.dyno.dev"
+                href="https://dynodev.vercel.app/signin"
+                onClick={() => setMobileOpen(false)}
                 className="rounded-lg bg-primary px-4 py-2.5 text-center text-sm font-medium text-white hover:bg-primary-hover"
               >
                 Get Started

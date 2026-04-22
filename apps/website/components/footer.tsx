@@ -4,17 +4,19 @@ import { Logo } from './logo'
 const footerLinks = {
   Product: [
     { label: 'Pricing', href: '/pricing' },
-    { label: 'Documentation', href: '/docs' },
-    { label: 'Dashboard', href: 'https://dashboard.dyno.dev' },
+    { label: 'Quickstart', href: '/docs#quickstart' },
+    { label: 'Architecture', href: '/docs#architecture' },
+    { label: 'Dashboard', href: 'https://dynodev.vercel.app' },
   ],
-  Company: [
-    { label: 'About', href: '/about' },
-    { label: 'Blog', href: '/blog' },
-    { label: 'GitHub', href: 'https://github.com/dyno-labs' },
+  Resources: [
+    { label: 'Documentation', href: '/docs' },
+    { label: 'SDK Reference', href: '/docs#reference' },
+    { label: 'Advanced APIs', href: '/docs#advanced' },
+    { label: 'GitHub', href: 'https://github.com/kaavlu/local-ai-sdk' },
   ],
   Legal: [
-    { label: 'Privacy', href: '/privacy' },
-    { label: 'Terms', href: '/terms' },
+    { label: 'Privacy (coming soon)', href: '#' },
+    { label: 'Terms (coming soon)', href: '#' },
   ],
 }
 
@@ -70,7 +72,7 @@ export function Footer() {
               X / Twitter
             </Link>
             <Link
-              href="https://github.com/dyno-labs"
+              href="https://github.com/kaavlu/local-ai-sdk"
               className="text-sm text-foreground-muted hover:text-foreground-secondary"
               target="_blank"
               rel="noopener noreferrer"

@@ -120,6 +120,33 @@ test('buildProjectPageViewModel marks configured project as ready', () => {
   assert.equal(result.health.activeApiKeyCount, 1)
   assert.equal(result.health.lastRequest?.status, 'success')
   assert.equal(result.health.lastRequest?.executionPath, 'local')
+  assert.equal(result.capability.notYetActiveControls.length > 0, true)
+  assert.equal(
+    result.capability.notYetActiveControls.some((control) => control.key === 'batteryMinPercent'),
+    true,
+  )
+  assert.match(result.capability.matrixVersion, /phase5-capability-truth-audit/)
+})
+
+test('buildProjectPageViewModel remains ready without hosted relay API key', () => {
+  const result = buildProjectPageViewModel({
+    project: createProject(),
+    config: createConfig({
+      upstream_api_key_configured: false,
+      upstream_api_key_last_updated_at: null,
+      fallback_enabled: true,
+      upstream_base_url: 'https://api.openai.com/v1',
+      upstream_model: 'text-embedding-3-small',
+    }),
+    apiKeys: [createApiKey()],
+    recentRequests: [createRequest()],
+    valueSummaryExecutions: [],
+  })
+
+  assert.equal(result.health.fallbackConfigured, true)
+  assert.equal(result.health.upstreamApiKeyConfigured, false)
+  assert.equal(result.health.readyForRequests, true)
+  assert.equal(result.setupJourney.steps[0]?.status, 'done')
 })
 
 test('buildProjectPageViewModel marks incomplete fallback setup', () => {
@@ -128,6 +155,7 @@ test('buildProjectPageViewModel marks incomplete fallback setup', () => {
     config: createConfig({
       upstream_base_url: null,
       fallback_enabled: true,
+      local_model: null,
     }),
     apiKeys: [createApiKey()],
     recentRequests: [],
@@ -137,6 +165,55 @@ test('buildProjectPageViewModel marks incomplete fallback setup', () => {
   assert.equal(result.health.fallbackConfigured, false)
   assert.equal(result.guidance.needsFallbackSetup, true)
   assert.equal(result.health.readyForRequests, false)
+  assert.equal(result.setupJourney.steps[0]?.key, 'configure_cloud_fallback')
+  assert.equal(result.setupJourney.steps[0]?.status, 'ready')
+  assert.equal(result.setupJourney.steps[1]?.key, 'configure_local_model')
+  assert.equal(result.setupJourney.steps[1]?.optional, true)
+  assert.equal(result.setupJourney.steps[1]?.status, 'todo')
+  assert.equal(result.setupJourney.steps[2]?.key, 'create_dyno_api_key')
+  assert.equal(result.setupJourney.steps[2]?.status, 'done')
+  assert.equal(result.setupJourney.steps[4]?.key, 'send_first_request')
+  assert.equal(result.setupJourney.steps[4]?.status, 'blocked')
+})
+
+test('setup journey reaches completion after first successful request', () => {
+  const result = buildProjectPageViewModel({
+    project: createProject(),
+    config: createConfig({
+      local_model: 'Xenova/all-MiniLM-L6-v2',
+      fallback_enabled: true,
+      upstream_base_url: 'https://api.openai.com/v1',
+      upstream_model: 'text-embedding-3-small',
+      upstream_api_key_configured: true,
+    }),
+    apiKeys: [createApiKey()],
+    recentRequests: [createRequest({ status: 'success' })],
+    valueSummaryExecutions: [],
+  })
+
+  assert.equal(result.setupJourney.allComplete, true)
+  assert.equal(result.setupJourney.completedCount, result.setupJourney.totalCount)
+  assert.equal(result.setupJourney.steps.every((step) => step.status === 'done' || step.optional), true)
+  assert.match(result.setupJourney.completionMessage ?? '', /Ready for first production test/)
+})
+
+test('setup journey points first request step to dashboard request tester', () => {
+  const result = buildProjectPageViewModel({
+    project: createProject(),
+    config: createConfig({
+      fallback_enabled: true,
+      upstream_base_url: 'https://api.openai.com/v1',
+      upstream_model: 'text-embedding-3-small',
+      upstream_api_key_configured: true,
+    }),
+    apiKeys: [createApiKey()],
+    recentRequests: [],
+    valueSummaryExecutions: [],
+  })
+
+  const firstRequestStep = result.setupJourney.steps.find((step) => step.key === 'send_first_request')
+  assert.equal(firstRequestStep?.status, 'ready')
+  assert.equal(firstRequestStep?.actionHref, '#request-tester')
 })
 
 test('integration snippet reflects logical model', () => {

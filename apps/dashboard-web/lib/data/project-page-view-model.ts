@@ -5,6 +5,12 @@ import type {
   ProjectRequestExecution,
   ProjectValueSummaryExecution,
 } from '@/lib/data/dashboard-types'
+import {
+  PROJECT_CAPABILITY_MATRIX_VERSION,
+  PROJECT_RUNTIME_CONTROL_CAPABILITIES,
+  isCapabilityEditable,
+  type RuntimeControlCapability,
+} from '@/lib/data/project-capability-matrix'
 
 const DEFAULT_DYNO_BASE_URL = 'http://127.0.0.1:8788/v1'
 const DEFAULT_EMBEDDINGS_LOGICAL_MODEL = 'dyno-embeddings-1'
@@ -90,6 +96,24 @@ export interface ProjectPilotProofPack {
   }
 }
 
+export type ProjectSetupJourneyStepStatus = 'todo' | 'blocked' | 'ready' | 'done'
+
+export interface ProjectSetupJourneyStep {
+  key:
+    | 'configure_cloud_fallback'
+    | 'configure_local_model'
+    | 'create_dyno_api_key'
+    | 'copy_sdk_snippet'
+    | 'send_first_request'
+  title: string
+  description: string
+  status: ProjectSetupJourneyStepStatus
+  optional?: boolean
+  blockerReason?: string
+  actionLabel: string
+  actionHref: string
+}
+
 export interface ProjectPageViewModel {
   project: Project
   config: ProjectConfig | null
@@ -124,6 +148,19 @@ export interface ProjectPageViewModel {
     needsDynoApiKey: boolean
     hasNoRequests: boolean
     hasRecentFailures: boolean
+  }
+  setupJourney: {
+    steps: ProjectSetupJourneyStep[]
+    completedCount: number
+    totalCount: number
+    allComplete: boolean
+    completionMessage: string | null
+  }
+  capability: {
+    matrixVersion: string
+    controls: RuntimeControlCapability[]
+    editableControlCount: number
+    notYetActiveControls: RuntimeControlCapability[]
   }
   valueSummary: ProjectValueSummary
   operationalSignals: ProjectOperationalSignals
@@ -163,14 +200,23 @@ export function buildOpenAiEmbeddingsSnippet(input: { baseUrl: string; logicalMo
 
 export function buildSdkEmbeddingsSnippet(input: { projectId: string }) {
   return [
-    "import { Dyno } from '@dyno/sdk-ts'",
+    "import OpenAI from 'openai'",
+    "import { Dyno } from '@dynosdk/ts'",
+    '',
+    'const provider = new OpenAI({',
+    '  apiKey: process.env.OPENAI_API_KEY!,',
+    '})',
     '',
     'const dyno = await Dyno.init({',
     '  projectApiKey: process.env.DYNO_PROJECT_API_KEY!,',
     '  fallback: {',
-    "    baseUrl: process.env.DYNO_FALLBACK_BASE_URL!,",
-    "    apiKey: process.env.DYNO_FALLBACK_API_KEY!,",
-    "    model: 'text-embedding-3-small',",
+    '    adapter: async ({ text }) => {',
+    '      const response = await provider.embeddings.create({',
+    "        model: 'text-embedding-3-small',",
+    '        input: text,',
+    '      })',
+    '      return { embedding: response.data[0]!.embedding }',
+    '    },',
     '  },',
     '})',
     '',
@@ -648,7 +694,7 @@ export function buildProjectPageViewModel(input: {
   )
   const upstreamApiKeyConfigured = Boolean(input.config?.upstream_api_key_configured)
   const hasApiKeys = activeApiKeyCount > 0
-  const fallbackReady = !input.config?.fallback_enabled || (fallbackConfigured && upstreamApiKeyConfigured)
+  const fallbackReady = !input.config?.fallback_enabled || fallbackConfigured
   const readyForRequests = hasApiKeys && Boolean(logicalModel) && fallbackReady
   const valueSummary = buildProjectValueSummary({
     projectId: input.project.id,
@@ -665,6 +711,121 @@ export function buildProjectPageViewModel(input: {
     valueSummary,
     operationalSignals,
   })
+  const controls = Object.values(PROJECT_RUNTIME_CONTROL_CAPABILITIES)
+  const editableControlCount = controls.filter((control) => isCapabilityEditable(control.state)).length
+  const notYetActiveControls = controls.filter((control) => control.state === 'not_yet_active')
+  const cloudFallbackReady = Boolean(input.config?.fallback_enabled && fallbackConfigured)
+  const localModelConfigured = Boolean(input.config?.local_model?.trim())
+  const firstSuccessfulRequestObserved = recentSuccessCount > 0
+  const steps: ProjectSetupJourneyStep[] = [
+    cloudFallbackReady
+      ? {
+          key: 'configure_cloud_fallback',
+          title: 'Configure cloud fallback',
+          description:
+            'Set fallback provider URL and model in Runtime Configuration. App-owned credentials are the default path.',
+          status: 'done',
+          actionLabel: 'Review runtime config',
+          actionHref: '#runtime-configuration',
+        }
+      : {
+          key: 'configure_cloud_fallback',
+          title: 'Configure cloud fallback',
+          description:
+            'Set fallback provider URL and model in Runtime Configuration. App-owned credentials are the default path.',
+          status: 'ready',
+          blockerReason: input.config?.fallback_enabled
+            ? 'Fallback is enabled but incomplete.'
+            : 'Fallback is disabled. Enable and configure it for reliable first success.',
+          actionLabel: 'Configure cloud',
+          actionHref: '#runtime-configuration',
+        },
+    localModelConfigured
+      ? {
+          key: 'configure_local_model',
+          title: 'Configure local model (if available)',
+          description: 'Choose a local model for on-device execution in Runtime Configuration.',
+          status: 'done',
+          optional: true,
+          actionLabel: 'Review local model',
+          actionHref: '#runtime-configuration',
+        }
+      : {
+          key: 'configure_local_model',
+          title: 'Configure local model (if available)',
+          description: 'Choose a local model for on-device execution in Runtime Configuration.',
+          status: 'todo',
+          optional: true,
+          blockerReason: 'Optional: add a local model when you are ready to validate on-device execution.',
+          actionLabel: 'Add local model',
+          actionHref: '#runtime-configuration',
+        },
+    hasApiKeys
+      ? {
+          key: 'create_dyno_api_key',
+          title: 'Create Dyno project API key',
+          description: 'Create at least one active project API key for request authentication.',
+          status: 'done',
+          actionLabel: 'Manage API keys',
+          actionHref: '#api-keys',
+        }
+      : {
+          key: 'create_dyno_api_key',
+          title: 'Create Dyno project API key',
+          description: 'Create at least one active project API key for request authentication.',
+          status: cloudFallbackReady ? 'ready' : 'blocked',
+          blockerReason: cloudFallbackReady
+            ? 'No active Dyno API key found.'
+            : 'Configure cloud fallback first, then create a project API key.',
+          actionLabel: 'Create API key',
+          actionHref: '#api-keys',
+        },
+    hasApiKeys
+      ? {
+          key: 'copy_sdk_snippet',
+          title: 'Copy SDK snippet',
+          description: 'Use the @dynosdk/ts snippet as the default local-first integration path.',
+          status: 'done',
+          actionLabel: 'Open integration',
+          actionHref: '#integration',
+        }
+      : {
+          key: 'copy_sdk_snippet',
+          title: 'Copy SDK snippet',
+          description: 'Use the @dynosdk/ts snippet as the default local-first integration path.',
+          status: 'blocked',
+          blockerReason: 'Create a Dyno API key first so snippet auth values are usable.',
+          actionLabel: 'Open integration',
+          actionHref: '#integration',
+        },
+    firstSuccessfulRequestObserved
+      ? {
+          key: 'send_first_request',
+          title: 'Send first request and verify telemetry',
+          description: 'Send one request from Request Tester and confirm it appears in Recent Requests.',
+          status: 'done',
+          actionLabel: 'View recent requests',
+          actionHref: '#recent-requests',
+        }
+      : {
+          key: 'send_first_request',
+          title: 'Send first request and verify telemetry',
+          description: 'Send one request from Request Tester and confirm it appears in Recent Requests.',
+          status: hasApiKeys && cloudFallbackReady ? 'ready' : 'blocked',
+          blockerReason:
+            hasApiKeys && cloudFallbackReady
+              ? recentFailureCount > 0
+                ? 'Only failing requests observed so far. Send one successful request.'
+                : 'No successful request observed yet.'
+              : 'Complete cloud fallback and API key setup before sending your first request.',
+          actionLabel: hasApiKeys && cloudFallbackReady ? 'Open request tester' : 'Fix setup blockers',
+          actionHref: hasApiKeys && cloudFallbackReady ? '#request-tester' : '#runtime-configuration',
+        },
+  ]
+  const requiredSteps = steps.filter((step) => !step.optional)
+  const completedCount = requiredSteps.filter((step) => step.status === 'done').length
+  const totalCount = requiredSteps.length
+  const allComplete = completedCount === totalCount && readyForRequests && firstSuccessfulRequestObserved
 
   return {
     project: input.project,
@@ -708,6 +869,21 @@ export function buildProjectPageViewModel(input: {
       needsDynoApiKey: !hasApiKeys,
       hasNoRequests: input.recentRequests.length === 0,
       hasRecentFailures: recentFailureCount > 0,
+    },
+    setupJourney: {
+      steps,
+      completedCount,
+      totalCount,
+      allComplete,
+      completionMessage: allComplete
+        ? 'Setup complete. Ready for first production test. Run one representative request and confirm local/cloud path behavior in Recent Requests.'
+        : null,
+    },
+    capability: {
+      matrixVersion: PROJECT_CAPABILITY_MATRIX_VERSION,
+      controls,
+      editableControlCount,
+      notYetActiveControls,
     },
     valueSummary,
     operationalSignals,

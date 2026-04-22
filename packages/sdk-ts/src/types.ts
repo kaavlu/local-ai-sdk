@@ -25,6 +25,33 @@ export interface EmbedTextPayload {
   text: string;
 }
 
+/** Payload for `taskType: "generate_text"` (Phase 4). */
+export interface GenerateTextPayload {
+  text: string;
+  max_new_tokens?: number;
+  temperature?: number;
+  top_p?: number;
+}
+
+/** Persisted local output for `taskType: "generate_text"` jobs. */
+export interface GenerateTextOutput {
+  message: string;
+  taskType: 'generate_text';
+  executor: 'local_real';
+  model: string;
+  output: string;
+  usage?: {
+    promptChars?: number;
+    completionChars?: number;
+    totalChars?: number;
+  };
+  parameters?: {
+    maxNewTokens?: number;
+    temperature?: number;
+    topP?: number;
+  };
+}
+
 /** Payload for `taskType: "classify_text"` (Step 17). */
 export interface ClassifyTextPayload {
   text: string;
@@ -286,6 +313,7 @@ export interface ModelDebugInfo {
   workloadModelRuntime: WorkloadModelRuntimeDebugInfo;
   embed_text: EmbedTextModelDebugRow;
   classify_text: EmbedTextModelDebugRow;
+  generate_text: EmbedTextModelDebugRow;
 }
 
 /** Per-status counts (Step 14 metrics). */

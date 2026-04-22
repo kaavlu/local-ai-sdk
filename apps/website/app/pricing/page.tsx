@@ -9,13 +9,13 @@ const tiers = [
     name: 'Free',
     price: '$0',
     period: 'forever',
-    description: 'For developers exploring SDK-first local execution.',
+    description: 'For developers testing local-first SDK integration.',
     cta: 'Get Started',
-    ctaHref: 'https://dashboard.dyno.dev',
+    ctaHref: 'https://dynodev.vercel.app/signin',
     highlight: false,
     features: [
       '1 project',
-      '10,000 requests / month (dashboard telemetry & optional hosted API)',
+      '10,000 metered events / month (dashboard telemetry + optional hosted API)',
       'Local-first policy',
       'Community support',
       'Dashboard access',
@@ -25,13 +25,13 @@ const tiers = [
     name: 'Pro',
     price: '$49',
     period: '/month',
-    description: 'For teams shipping AI-powered products.',
+    description: 'For teams shipping local-first AI in production.',
     cta: 'Start Free Trial',
-    ctaHref: 'https://dashboard.dyno.dev',
+    ctaHref: 'https://dynodev.vercel.app',
     highlight: true,
     features: [
       'Unlimited projects',
-      '500,000 requests / month (dashboard telemetry & optional hosted API)',
+      '500,000 metered events / month (dashboard telemetry + optional hosted API)',
       'Advanced local-first policy',
       'Priority support',
       'Request analytics & monitoring',
@@ -43,14 +43,14 @@ const tiers = [
     name: 'Enterprise',
     price: 'Custom',
     period: '',
-    description: 'For organizations with compliance or scale requirements.',
+    description: 'For organizations with compliance and rollout requirements.',
     cta: 'Book a Demo',
     ctaHref: 'mailto:sales@dyno.dev',
     highlight: false,
     features: [
       'Unlimited everything',
       'Custom policy rules',
-      'SLA guarantee',
+      'SLA options',
       'Dedicated support',
       'On-prem deployment option',
       'SSO & audit logs',
@@ -79,9 +79,16 @@ export default function PricingPage() {
             Pricing
           </h1>
           <p className="mx-auto mt-4 max-w-xl text-lg text-foreground-secondary">
-            Start free. Scale when you need to. No surprises.
+            Start free, keep your existing provider path, and scale control
+            plane visibility as usage grows.
           </p>
         </div>
+
+        <p className="mx-auto mt-6 max-w-3xl text-center text-sm text-foreground-muted">
+          Metered events reflect control-plane telemetry and optional hosted API
+          usage. End-user app inference can run locally or on your own cloud
+          provider path.
+        </p>
 
         {/* Tiers */}
         <motion.div

@@ -24,9 +24,9 @@ const features = [
       'Policy and rollout settings are project-level and managed from the dashboard; the SDK enforces them locally.',
   },
   {
-    title: 'Embeddings & completions',
+    title: 'Implemented workloads today',
     description:
-      'Support embedding and generative workloads through the SDK and local runtime, with cloud fallback when needed.',
+      'Local runtime supports embedding, text generation, and text classification lanes today, with app-owned cloud fallback when needed.',
   },
   {
     title: 'Secure by default',
@@ -47,18 +47,18 @@ const itemVariants = {
 
 export function Production() {
   return (
-    <section className="relative py-16 md:py-24">
+    <section className="relative py-16 md:py-24" id="capabilities">
       <div className="mx-auto max-w-6xl px-6">
         <div className="text-center">
           <p className="text-sm font-medium uppercase tracking-widest text-primary">
-            Production ready
+            Capability snapshot
           </p>
           <h2 className="mt-3 text-3xl font-bold tracking-tight text-foreground md:text-4xl">
-            Built for real workloads
+            Built for predictable local-first behavior
           </h2>
           <p className="mx-auto mt-3 max-w-2xl text-foreground-secondary">
-            Dyno isn&apos;t a prototype. It&apos;s infrastructure you can depend
-            on in production.
+            Dyno is designed so local execution can fail fast and the app can
+            reliably use its existing cloud path.
           </p>
         </div>
 

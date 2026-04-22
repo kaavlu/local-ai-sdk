@@ -18,9 +18,12 @@ export interface DynoDoctorOptions {
     baseUrl: string;
     apiKey: string;
     model?: string;
+    generationModel?: string;
     embedPath?: string;
+    generatePath?: string;
     timeoutMs?: number;
     sampleText?: string;
+    generationSampleText?: string;
   };
 }
 
@@ -44,6 +47,8 @@ export interface DynoDoctorResolverResult extends DynoDoctorCheckResult {
 
 export interface DynoDoctorFallbackResult extends DynoDoctorCheckResult {
   skipped: boolean;
+  embeddings: DynoDoctorCheckResult & { skipped: boolean };
+  generation: DynoDoctorCheckResult & { skipped: boolean };
 }
 
 export interface DynoDoctorReport {
@@ -64,6 +69,7 @@ const DEFAULT_MODE: LocalMode = 'interactive';
 const DEFAULT_RUNTIME_TIMEOUT_MS = 2_000;
 const DEFAULT_READINESS_TIMEOUT_MS = 2_000;
 const DEFAULT_FALLBACK_TIMEOUT_MS = 4_000;
+const DEFAULT_GENERATION_FALLBACK_MODEL = 'gpt-4.1-mini';
 
 function toDurationMs(startedAt: number): number {
   return Math.max(0, Date.now() - startedAt);
@@ -113,6 +119,52 @@ function hasEmbeddingShape(payload: unknown): boolean {
   return Boolean(first && isNumericArray(first.embedding));
 }
 
+function hasGenerationTextShape(payload: unknown): boolean {
+  if (payload == null || typeof payload !== 'object') {
+    return false;
+  }
+  const root = payload as Record<string, unknown>;
+  if (typeof root.output_text === 'string' && root.output_text.trim()) {
+    return true;
+  }
+  const output = root.output;
+  if (Array.isArray(output) && output.length > 0) {
+    const first = output[0];
+    if (first && typeof first === 'object') {
+      const firstRoot = first as Record<string, unknown>;
+      const content = firstRoot.content;
+      if (Array.isArray(content) && content.length > 0) {
+        const head = content[0];
+        if (head && typeof head === 'object') {
+          const text = (head as Record<string, unknown>).text;
+          if (typeof text === 'string' && text.trim()) {
+            return true;
+          }
+        }
+      }
+    }
+  }
+  const choices = root.choices;
+  if (Array.isArray(choices) && choices.length > 0) {
+    const firstChoice = choices[0];
+    if (firstChoice && typeof firstChoice === 'object') {
+      const choice = firstChoice as Record<string, unknown>;
+      const message = choice.message;
+      if (message && typeof message === 'object') {
+        const content = (message as Record<string, unknown>).content;
+        if (typeof content === 'string' && content.trim()) {
+          return true;
+        }
+      }
+      const text = choice.text;
+      if (typeof text === 'string' && text.trim()) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 async function probeRuntime(options: DynoDoctorOptions): Promise<DynoDoctorRuntimeResult> {
   const startedAt = Date.now();
   const runtimeBaseUrl = normalizeBaseUrl(options.runtimeBaseUrl ?? DEFAULT_RUNTIME_URL);
@@ -150,12 +202,55 @@ async function probeRuntime(options: DynoDoctorOptions): Promise<DynoDoctorRunti
     };
   }
 
+  probeOrder.push('GET /debug/models');
+  try {
+    const models = await withTimeout(
+      () => sdk.getModelDebugInfo(),
+      runtimeTimeoutMs,
+      'runtime_generation_models_timeout',
+    );
+    if (!models.generate_text) {
+      return {
+        ok: false,
+        code: 'runtime_generation_unsupported',
+        message: 'Runtime /debug/models does not report generate_text model support.',
+        durationMs: toDurationMs(startedAt),
+        probeOrder,
+        health,
+      };
+    }
+    if (models.generate_text.state === 'failed') {
+      return {
+        ok: false,
+        code: 'runtime_generation_model_failed',
+        message: 'Runtime reports generate_text model state=failed. Check local model setup.',
+        durationMs: toDurationMs(startedAt),
+        probeOrder,
+        health,
+      };
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const code = message.includes('runtime_generation_models_timeout')
+      ? 'runtime_generation_models_timeout'
+      : 'runtime_generation_probe_failed';
+    return {
+      ok: false,
+      code,
+      message: `Runtime generation support probe failed: ${message}`,
+      durationMs: toDurationMs(startedAt),
+      probeOrder,
+      health,
+    };
+  }
+
   const supportsReadiness = supportsReadinessProbe(health);
   if (!supportsReadiness) {
     return {
       ok: true,
       code: 'runtime_ready_legacy',
-      message: 'Runtime is healthy and treated as ready (legacy runtime without readinessDebugV1).',
+      message:
+        'Runtime is healthy with generation support and treated as ready (legacy runtime without readinessDebugV1).',
       durationMs: toDurationMs(startedAt),
       probeOrder,
       health,
@@ -213,7 +308,7 @@ async function probeRuntime(options: DynoDoctorOptions): Promise<DynoDoctorRunti
   return {
     ok: true,
     code: 'runtime_ready',
-    message: `Runtime is healthy and ready for mode "${localMode}".`,
+    message: `Runtime is healthy, generation-capable, and ready for mode "${localMode}".`,
     durationMs: toDurationMs(startedAt),
     probeOrder,
     health,
@@ -275,23 +370,13 @@ async function probeResolver(options: DynoDoctorOptions): Promise<DynoDoctorReso
   }
 }
 
-async function probeFallback(options: DynoDoctorOptions): Promise<DynoDoctorFallbackResult> {
+async function probeFallbackEmbeddings(options: DynoDoctorOptions): Promise<DynoDoctorCheckResult> {
   const startedAt = Date.now();
-  if (!options.fallback?.baseUrl || !options.fallback?.apiKey) {
-    return {
-      ok: true,
-      code: 'fallback_skipped',
-      message: 'Fallback probe skipped (missing fallback base URL or API key).',
-      durationMs: toDurationMs(startedAt),
-      skipped: true,
-    };
-  }
-
-  const baseUrl = normalizeBaseUrl(options.fallback.baseUrl);
-  const timeoutMs = Math.max(200, options.fallback.timeoutMs ?? DEFAULT_FALLBACK_TIMEOUT_MS);
-  const embedPath = options.fallback.embedPath?.trim() || '/embeddings';
-  const model = options.fallback.model?.trim() || 'text-embedding-3-small';
-  const sampleText = options.fallback.sampleText?.trim() || 'dyno-doctor-fallback-probe';
+  const baseUrl = normalizeBaseUrl(options.fallback!.baseUrl);
+  const timeoutMs = Math.max(200, options.fallback!.timeoutMs ?? DEFAULT_FALLBACK_TIMEOUT_MS);
+  const embedPath = options.fallback!.embedPath?.trim() || '/embeddings';
+  const model = options.fallback!.model?.trim() || 'text-embedding-3-small';
+  const sampleText = options.fallback!.sampleText?.trim() || 'dyno-doctor-fallback-probe';
 
   let response: Response;
   try {
@@ -317,9 +402,8 @@ async function probeFallback(options: DynoDoctorOptions): Promise<DynoDoctorFall
     return {
       ok: false,
       code,
-      message: `Fallback probe failed: ${message}`,
+      message: `Embeddings fallback probe failed: ${message}`,
       durationMs: toDurationMs(startedAt),
-      skipped: false,
     };
   }
 
@@ -328,9 +412,8 @@ async function probeFallback(options: DynoDoctorOptions): Promise<DynoDoctorFall
     return {
       ok: false,
       code: `fallback_http_${response.status}`,
-      message: `Fallback returned ${response.status}${text ? `: ${text}` : ''}`,
+      message: `Embeddings fallback returned ${response.status}${text ? `: ${text}` : ''}`,
       durationMs: toDurationMs(startedAt),
-      skipped: false,
     };
   }
 
@@ -342,9 +425,8 @@ async function probeFallback(options: DynoDoctorOptions): Promise<DynoDoctorFall
       return {
         ok: false,
         code: 'fallback_invalid_json',
-        message: 'Fallback returned invalid JSON.',
+        message: 'Embeddings fallback returned invalid JSON.',
         durationMs: toDurationMs(startedAt),
-        skipped: false,
       };
     }
   }
@@ -353,18 +435,162 @@ async function probeFallback(options: DynoDoctorOptions): Promise<DynoDoctorFall
     return {
       ok: false,
       code: 'fallback_invalid_payload',
-      message: 'Fallback response did not include an embedding vector.',
+      message: 'Embeddings fallback response did not include an embedding vector.',
+      durationMs: toDurationMs(startedAt),
+    };
+  }
+
+  return {
+    ok: true,
+    code: 'fallback_embeddings_ok',
+    message: 'Embeddings fallback endpoint is reachable and returned a valid embedding payload.',
+    durationMs: toDurationMs(startedAt),
+  };
+}
+
+async function probeFallbackGeneration(options: DynoDoctorOptions): Promise<DynoDoctorCheckResult> {
+  const startedAt = Date.now();
+  const baseUrl = normalizeBaseUrl(options.fallback!.baseUrl);
+  const timeoutMs = Math.max(200, options.fallback!.timeoutMs ?? DEFAULT_FALLBACK_TIMEOUT_MS);
+  const generatePath = options.fallback!.generatePath?.trim() || '/chat/completions';
+  const model = options.fallback!.generationModel?.trim() || DEFAULT_GENERATION_FALLBACK_MODEL;
+  const sampleText = options.fallback!.generationSampleText?.trim() || 'Return one short word: dyno';
+
+  let response: Response;
+  try {
+    response = await withTimeout(
+      () =>
+        fetch(`${baseUrl}${generatePath}`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${options.fallback?.apiKey ?? ''}`,
+            'Content-Type': 'application/json; charset=utf-8',
+          },
+          body: JSON.stringify({
+            model,
+            messages: [{ role: 'user', content: sampleText }],
+            max_tokens: 12,
+            temperature: 0,
+          }),
+        }),
+      timeoutMs,
+      'fallback_generation_timeout',
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const code = message.includes('fallback_generation_timeout')
+      ? 'fallback_generation_timeout'
+      : 'fallback_generation_unreachable';
+    return {
+      ok: false,
+      code,
+      message: `Generation fallback probe failed: ${message}`,
+      durationMs: toDurationMs(startedAt),
+    };
+  }
+
+  const text = await response.text();
+  if (!response.ok) {
+    return {
+      ok: false,
+      code: `fallback_generation_http_${response.status}`,
+      message: `Generation fallback returned ${response.status}${text ? `: ${text}` : ''}`,
+      durationMs: toDurationMs(startedAt),
+    };
+  }
+
+  let payload: unknown = {};
+  if (text) {
+    try {
+      payload = JSON.parse(text);
+    } catch {
+      return {
+        ok: false,
+        code: 'fallback_generation_invalid_json',
+        message: 'Generation fallback returned invalid JSON.',
+        durationMs: toDurationMs(startedAt),
+      };
+    }
+  }
+
+  if (!hasGenerationTextShape(payload)) {
+    return {
+      ok: false,
+      code: 'fallback_generation_invalid_payload',
+      message: 'Generation fallback response did not include generated text.',
+      durationMs: toDurationMs(startedAt),
+    };
+  }
+
+  return {
+    ok: true,
+    code: 'fallback_generation_ok',
+    message: 'Generation fallback endpoint is reachable and returned generated text.',
+    durationMs: toDurationMs(startedAt),
+  };
+}
+
+async function probeFallback(options: DynoDoctorOptions): Promise<DynoDoctorFallbackResult> {
+  const startedAt = Date.now();
+  if (!options.fallback?.baseUrl || !options.fallback?.apiKey) {
+    return {
+      ok: true,
+      code: 'fallback_skipped',
+      message: 'Fallback probe skipped (missing fallback base URL or API key).',
+      durationMs: toDurationMs(startedAt),
+      skipped: true,
+      embeddings: {
+        ok: true,
+        code: 'fallback_embeddings_skipped',
+        message: 'Embeddings fallback probe skipped (missing fallback base URL or API key).',
+        durationMs: 0,
+        skipped: true,
+      },
+      generation: {
+        ok: true,
+        code: 'fallback_generation_skipped',
+        message: 'Generation fallback probe skipped (missing fallback base URL or API key).',
+        durationMs: 0,
+        skipped: true,
+      },
+    };
+  }
+
+  const embeddings = await probeFallbackEmbeddings(options);
+  const generation = await probeFallbackGeneration(options);
+
+  if (!embeddings.ok) {
+    return {
+      ok: false,
+      code: embeddings.code,
+      message: embeddings.message,
       durationMs: toDurationMs(startedAt),
       skipped: false,
+      embeddings: { ...embeddings, skipped: false },
+      generation: { ...generation, skipped: false },
+    };
+  }
+
+  if (!generation.ok) {
+    return {
+      ok: false,
+      code: generation.code,
+      message: generation.message,
+      durationMs: toDurationMs(startedAt),
+      skipped: false,
+      embeddings: { ...embeddings, skipped: false },
+      generation: { ...generation, skipped: false },
     };
   }
 
   return {
     ok: true,
     code: 'fallback_ok',
-    message: 'Fallback endpoint is reachable and returned embeddings payload.',
+    message: 'Fallback endpoint is reachable for embeddings and generation probes.',
     durationMs: toDurationMs(startedAt),
     skipped: false,
+    embeddings: { ...embeddings, skipped: false },
+    generation: { ...generation, skipped: false },
   };
 }
 
@@ -372,7 +598,7 @@ export async function runDynoDoctor(options: DynoDoctorOptions = {}): Promise<Dy
   const runtime = await probeRuntime(options);
   const resolver = await probeResolver(options);
   const fallback = await probeFallback(options);
-  const checks = [runtime, resolver, fallback];
+  const checks = [runtime, resolver, fallback.embeddings, fallback.generation];
   const passCount = checks.filter((check) => check.ok && !('skipped' in check && check.skipped)).length;
   const failCount = checks.filter((check) => !check.ok).length;
   const skippedCount = checks.filter((check) => 'skipped' in check && check.skipped).length;

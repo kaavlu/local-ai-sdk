@@ -10,7 +10,7 @@
     "dev": "tsc -p tsconfig.json && electron ."
   },
   "dependencies": {
-    "@dyno/sdk-ts": "0.0.1",
+    "@dynosdk/ts": "0.0.1",
     "@google/genai": "^1.48.0"
   },
   "devDependencies": {

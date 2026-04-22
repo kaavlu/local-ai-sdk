@@ -26,12 +26,12 @@ New Dyno path:
 
 - `DYNO_PROJECT_API_KEY` (or `DYNO_API_KEY`)
 - optional `DYNO_CONFIG_RESOLVER_URL` (default `http://127.0.0.1:3000`)
-- optional `DYNO_AGENT_URL` (default `http://127.0.0.1:8787`)
-- `DYNO_FALLBACK_BASE_URL`
-- `DYNO_FALLBACK_API_KEY`
-- optional `DYNO_FALLBACK_MODEL`
+- optional advanced `DYNO_AGENT_URL` runtime override
+- adapter-first fallback remains the default (provider credentials stay in app code)
+- optional secondary convenience-wrapper vars: `DYNO_FALLBACK_BASE_URL`, `DYNO_FALLBACK_API_KEY`, `DYNO_FALLBACK_MODEL`
 
 Note: automated tests spin up mock resolver/runtime/fallback services and do not require external credentials.
+Canonical env/source-of-truth quickstart is root `README.md` section `Golden path quickstart (Phase 6 default)`.
 
 ## Pilot telemetry proof-pack workflow
 

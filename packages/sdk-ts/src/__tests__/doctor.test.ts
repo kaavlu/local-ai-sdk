@@ -60,6 +60,38 @@ async function startRuntimeServer(port: number, ready = true): Promise<http.Serv
       );
       return;
     }
+    if (req.method === 'GET' && pathname === '/debug/models') {
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(
+        JSON.stringify({
+          workloadModelRuntime: {
+            idleEvictAfterMs: 60000,
+            maxResidentWorkloadModels: 2,
+            defaultExecutionTimeoutMs: 60000,
+            perWorkloadExecutionTimeoutMs: {},
+          },
+          embed_text: {
+            state: 'ready',
+            loadedAt: Date.now(),
+            lastUsedAt: Date.now(),
+            lastError: null,
+          },
+          classify_text: {
+            state: 'ready',
+            loadedAt: Date.now(),
+            lastUsedAt: Date.now(),
+            lastError: null,
+          },
+          generate_text: {
+            state: 'ready',
+            loadedAt: Date.now(),
+            lastUsedAt: Date.now(),
+            lastError: null,
+          },
+        }),
+      );
+      return;
+    }
     res.writeHead(404, { 'Content-Type': 'application/json; charset=utf-8' });
     res.end(JSON.stringify({ error: 'not_found' }));
   });
@@ -95,6 +127,46 @@ async function startSlowFallbackServer(port: number, delayMs: number): Promise<h
       setTimeout(() => {
         res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
         res.end(JSON.stringify({ embedding: [0.1, 0.2, 0.3] }));
+      }, delayMs);
+      return;
+    }
+    if (req.method === 'POST' && pathname === '/chat/completions') {
+      setTimeout(() => {
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(
+          JSON.stringify({
+            choices: [{ message: { content: 'dyno' } }],
+          }),
+        );
+      }, delayMs);
+      return;
+    }
+    res.writeHead(404, { 'Content-Type': 'application/json; charset=utf-8' });
+    res.end(JSON.stringify({ error: 'not_found' }));
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(port, '127.0.0.1', () => resolve());
+  });
+  return server;
+}
+
+async function startGenerationSlowFallbackServer(port: number, delayMs: number): Promise<http.Server> {
+  const server = http.createServer((req, res) => {
+    const pathname = (req.url ?? '/').split('?')[0];
+    if (req.method === 'POST' && pathname === '/embeddings') {
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ embedding: [0.1, 0.2, 0.3] }));
+      return;
+    }
+    if (req.method === 'POST' && pathname === '/chat/completions') {
+      setTimeout(() => {
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(
+          JSON.stringify({
+            choices: [{ message: { content: 'dyno' } }],
+          }),
+        );
       }, delayMs);
       return;
     }
@@ -169,6 +241,32 @@ test('returns explicit fallback timeout code', async () => {
   }
 });
 
+test('returns explicit generation fallback timeout code', async () => {
+  const runtimePort = await getFreePort();
+  const fallbackPort = await getFreePort();
+  const runtimeServer = await startRuntimeServer(runtimePort, true);
+  const fallbackServer = await startGenerationSlowFallbackServer(fallbackPort, 1_500);
+
+  try {
+    const report = await runDynoDoctor({
+      runtimeBaseUrl: `http://127.0.0.1:${runtimePort}`,
+      fallback: {
+        baseUrl: `http://127.0.0.1:${fallbackPort}`,
+        apiKey: 'test-key',
+        timeoutMs: 100,
+      },
+    });
+
+    assert.equal(report.ok, false);
+    assert.equal(report.fallback.ok, false);
+    assert.equal(report.fallback.generation.ok, false);
+    assert.equal(report.fallback.code, 'fallback_generation_timeout');
+  } finally {
+    await closeServer(runtimeServer);
+    await closeServer(fallbackServer);
+  }
+});
+
 test('passes runtime check when health and readiness are healthy', async () => {
   const runtimePort = await getFreePort();
   const runtimeServer = await startRuntimeServer(runtimePort, true);
@@ -180,7 +278,11 @@ test('passes runtime check when health and readiness are healthy', async () => {
 
     assert.equal(report.runtime.ok, true);
     assert.equal(report.runtime.code, 'runtime_ready');
-    assert.deepEqual(report.runtime.probeOrder, ['GET /health', 'GET /debug/readiness']);
+    assert.deepEqual(report.runtime.probeOrder, [
+      'GET /health',
+      'GET /debug/models',
+      'GET /debug/readiness',
+    ]);
   } finally {
     await closeServer(runtimeServer);
   }

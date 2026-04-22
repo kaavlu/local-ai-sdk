@@ -19,19 +19,29 @@ const res = await dyno.embeddings.create({
 
 const embedding = res.data[0].embedding`
 
-const directSdkCode = `import { DynoSdk } from "@dyno/sdk-ts"
+const directSdkCode = `import OpenAI from "openai"
+import { Dyno } from "@dynosdk/ts"
 
-const sdk = new DynoSdk()
+const provider = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! })
 
-const job = await sdk.createJob({
-  taskType: "embed_text",
-  payload: { text: "How do I reset my password?" },
-  executionPolicy: "cloud_allowed",
-  localMode: "interactive",
+const dyno = await Dyno.init({
+  projectApiKey: process.env.DYNO_PROJECT_API_KEY!,
+  fallback: {
+    generateTextAdapter: async ({ text }) => {
+      const response = await provider.chat.completions.create({
+        model: "gpt-4.1-mini",
+        messages: [{ role: "user", content: text }],
+      })
+      return {
+        output: response.choices[0]?.message?.content ?? "",
+        model: "gpt-4.1-mini",
+      }
+    },
+  },
 })
 
-const done = await sdk.waitForJobCompletion(job.id)
-const result = await sdk.getJobResult(job.id)`
+const output = await dyno.generateText("Summarize this support conversation")
+console.log(output.decision, output.reason, output.output)`
 
 type Tab = 'openai' | 'direct'
 
@@ -39,7 +49,7 @@ export function CodeExample() {
   const [tab, setTab] = useState<Tab>('direct')
 
   return (
-    <section className="relative py-16 md:py-24">
+    <section className="relative py-16 md:py-24" id="integration">
       <div className="mx-auto max-w-6xl px-6">
         <div className="grid items-center gap-10 lg:grid-cols-2 lg:gap-14">
           <motion.div
@@ -57,11 +67,17 @@ export function CodeExample() {
               Add the optional HTTP API when you need it.
             </h2>
             <p className="mt-3 text-foreground-secondary leading-relaxed">
-              Production apps integrate <code className="rounded bg-card px-1.5 py-0.5 text-xs text-foreground-secondary">@dyno/sdk-ts</code> and the local runtime. The OpenAI-compatible endpoint is an optional path for sandbox, enterprise, and compatibility—not the default architecture.
+              Production apps integrate{' '}
+              <code className="rounded bg-card px-1.5 py-0.5 text-xs text-foreground-secondary">
+                @dynosdk/ts
+              </code>{' '}
+              through the GA <code className="rounded bg-card px-1.5 py-0.5 text-xs text-foreground-secondary">Dyno.init</code>{' '}
+              flow. Low-level <code className="rounded bg-card px-1.5 py-0.5 text-xs text-foreground-secondary">DynoSdk</code>{' '}
+              APIs remain an advanced lane in docs.
             </p>
             <div className="mt-5 flex flex-wrap items-center gap-3">
               <span className="inline-block rounded-md bg-primary/10 px-3 py-1.5 font-mono text-xs text-primary">
-                npm install @dyno/sdk-ts
+                npm install @dynosdk/ts
               </span>
               <span className="inline-block rounded-md bg-card px-3 py-1.5 font-mono text-xs text-foreground-muted">
                 npm install openai
@@ -86,7 +102,7 @@ export function CodeExample() {
                       : 'text-foreground-muted hover:text-foreground-secondary'
                   }`}
                 >
-                  Direct SDK
+                  SDK (default)
                 </button>
                 <button
                   type="button"
@@ -112,7 +128,7 @@ export function CodeExample() {
             <p className="mt-2.5 text-center text-xs text-foreground-muted">
               {tab === 'openai'
                 ? 'Hosted OpenAI-compatible API — secondary to the SDK + local runtime path.'
-                : 'Primary path: local vs cloud decisions in the SDK/runtime on the user’s device.'}
+                : 'Primary path: Dyno.init + generateText/embedText with app-owned fallback adapters.'}
             </p>
           </motion.div>
         </div>

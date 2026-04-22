@@ -9,21 +9,21 @@ const steps = [
     icon: Code2,
     title: 'Integrate the Dyno SDK',
     description:
-      'Use @dyno/sdk-ts against the local runtime—the default path for local-first execution with your existing cloud fallback.',
+      'Use @dynosdk/ts against the local runtime—the default path for local-first execution with your existing cloud fallback.',
   },
   {
     number: '02',
     icon: GitBranch,
-    title: 'SDK/runtime evaluates on-device',
+    title: 'SDK/runtime decides on-device',
     description:
-      'Model availability, device signals, and project policy (from the control plane) inform a fast local vs cloud decision on the user’s device.',
+      'Model availability, device signals, and project policy from Dyno inform a fast local-vs-cloud decision on the user device making the request.',
   },
   {
     number: '03',
     icon: Zap,
-    title: 'Run locally or use your cloud path',
+    title: 'Execute locally or use your cloud fallback',
     description:
-      'Executes on-device when viable. Otherwise falls back to the app’s existing provider client and credentials—Dyno is not a hosted inference broker in the default architecture.',
+      'When local is not viable, Dyno calls your app-owned fallback adapter. It does not route that request to another user device.',
   },
 ]
 
@@ -41,7 +41,10 @@ const itemVariants = {
 
 export function HowItWorks() {
   return (
-    <section className="relative py-16 md:py-24">
+    <section
+      id="how-it-works"
+      className="relative py-16 md:py-24 scroll-mt-24"
+    >
       <div className="mx-auto max-w-6xl px-6">
         <div className="text-center">
           <p className="text-sm font-medium uppercase tracking-widest text-primary">
@@ -51,9 +54,9 @@ export function HowItWorks() {
             Three steps. SDK-first.
           </h2>
           <p className="mx-auto mt-3 max-w-2xl text-foreground-secondary">
-            The control plane delivers configuration and telemetry. Local vs cloud
-            happens in the SDK and local runtime—not by proxying every production
-            request through hosted Dyno servers.
+            Local-vs-cloud decisions happen in the SDK and runtime on each user
+            device. The control plane supplies configuration and directional
+            telemetry.
           </p>
         </div>
 

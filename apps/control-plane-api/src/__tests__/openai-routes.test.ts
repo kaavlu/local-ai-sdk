@@ -710,6 +710,44 @@ test('POST /telemetry/events accepts SDK execution event payload', async () => {
   assert.equal(executions[0]?.requestId, 'req-telemetry-1');
 });
 
+test('POST /telemetry/events accepts generation telemetry endpoint mapping', async () => {
+  const executions = captureRecordedExecutions();
+  const server = createServer();
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  if (!address || typeof address === 'string') {
+    throw new Error('Failed to get server address');
+  }
+
+  const response = await fetch(`http://127.0.0.1:${address.port}/telemetry/events`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json; charset=utf-8' },
+    body: JSON.stringify({
+      eventType: 'generate_text_execution',
+      projectId: 'proj-telemetry-generation',
+      useCase: 'text_generation',
+      endpoint: '/sdk/generate-text',
+      decision: 'local',
+      reason: 'local_job_completed',
+      durationMs: 47,
+      fallbackInvoked: false,
+      requestId: 'req-telemetry-generate-1',
+    }),
+  });
+  const body = (await response.json()) as { accepted: number; dropped: number };
+
+  await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+
+  assert.equal(response.status, 202);
+  assert.equal(body.accepted, 1);
+  assert.equal(body.dropped, 0);
+  assert.equal(executions.length, 1);
+  assert.equal(executions[0]?.projectId, 'proj-telemetry-generation');
+  assert.equal(executions[0]?.endpoint, '/sdk/generate-text');
+  assert.equal(executions[0]?.executionPath, 'local');
+  assert.equal(executions[0]?.executionReason, 'local_job_completed');
+});
+
 test('POST /telemetry/events rejects empty payload', async () => {
   const server = createServer();
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));

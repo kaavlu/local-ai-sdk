@@ -1,10 +1,11 @@
-/** Public exports for `@dyno/sdk-ts` — primary SDK integration surface for the local runtime (SDK-first architecture; see repo AGENTS.md). */
+/** Public exports for `@dynosdk/ts` — primary SDK integration surface for the local runtime (SDK-first architecture; see repo AGENTS.md). */
 /** GA default entrypoint. */
 export { Dyno } from './dyno.js';
 /** Advanced/internal low-level runtime HTTP client. */
 export { DynoSdk, DynoSdkError } from './client.js';
 /** Advanced/internal runtime building blocks. */
 export { CachedProjectConfigProvider, DynoEmbeddingsRuntime } from './embeddings-runtime.js';
+export { DynoGenerationRuntime } from './generation-runtime.js';
 export { ManagedProjectConfigProvider, ManagedResolverError } from './demo-http-config-provider.js';
 export {
   ProjectConfig,
@@ -33,9 +34,21 @@ export type {
   DynoEmbeddingsRuntimeManagedOptions,
   DynoEmbeddingsRuntimeOptions,
   ManagedConfigResolverErrorCode,
+  ProjectConfigCacheOptions,
   TelemetryEvent,
   TelemetrySink,
 } from './embeddings-runtime.js';
+export type {
+  DynoGenerationRuntimeCustomProviderOptions,
+  DynoGenerationRuntimeManagedOptions,
+  DynoGenerationRuntimeOptions,
+  GenerateTextOptions,
+  GenerationExecutionResult,
+  GenerationFallbackAdapter,
+  GenerationFallbackRequest,
+  GenerationFallbackResult,
+  ManagedGenerationConfigResolverErrorCode,
+} from './generation-runtime.js';
 export type { ManagedProjectConfigProviderOptions, ManagedResolverErrorCode } from './demo-http-config-provider.js';
 /** Advanced/internal low-level runtime client types. */
 export type {
@@ -49,6 +62,8 @@ export type {
   EmbedTextModelDebugRow,
   EmbedTextModelState,
   EmbedTextPayload,
+  GenerateTextOutput,
+  GenerateTextPayload,
   ExecutionPolicy,
   HealthResponse,
   JobRecord,

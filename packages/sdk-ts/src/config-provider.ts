@@ -2,7 +2,7 @@ import type { DynoSdk } from './client.js';
 import type { DynoSdkOptions, ExecutionPolicy, LocalMode } from './types.js';
 
 /** Canonical use-case label from project config (dashboard-controlled). */
-export type ProjectUseCaseType = 'embeddings' | string;
+export type ProjectUseCaseType = 'embeddings' | 'text_generation' | string;
 /** Matches dashboard strategy values; do not invent parallel enums. */
 export type ProjectStrategyPreset = 'local_first' | 'balanced' | 'cloud_first';
 

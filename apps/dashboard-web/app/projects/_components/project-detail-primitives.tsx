@@ -1,4 +1,12 @@
 import type { ReactNode } from 'react'
+import {
+  DashboardInlineCallout,
+  DashboardInsetPanel,
+  DashboardMetadataItem,
+  DashboardMetadataRow,
+  DashboardSectionCard,
+  DashboardStatusBadge,
+} from '@/components/dashboard/surface-primitives'
 import { cn } from '@/lib/utils'
 
 interface ProjectSectionShellProps {
@@ -19,21 +27,15 @@ export function ProjectSectionShell({
   headerClassName,
 }: ProjectSectionShellProps) {
   return (
-    <section
-      className={cn(
-        'rounded-xl border border-border/50 bg-card/95 p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]',
-        className,
-      )}
+    <DashboardSectionCard
+      title={title}
+      description={description}
+      action={action}
+      className={className}
+      headerClassName={headerClassName}
     >
-      <div className={cn('mb-4 flex items-start justify-between gap-3', headerClassName)}>
-        <div>
-          <h2 className="text-[13px] font-semibold tracking-tight text-foreground">{title}</h2>
-          {description ? <p className="mt-1 text-[11px] text-muted-foreground/80">{description}</p> : null}
-        </div>
-        {action}
-      </div>
       {children}
-    </section>
+    </DashboardSectionCard>
   )
 }
 
@@ -53,16 +55,51 @@ export function ProjectStatTile({
   valueClassName,
 }: ProjectStatTileProps) {
   return (
-    <div
-      className={cn(
-        'rounded-lg border border-border/45 bg-background/35 px-3 py-2.5',
-        'shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]',
-        className,
-      )}
-    >
-      <p className="text-[10px] uppercase tracking-wide text-muted-foreground/75">{label}</p>
-      <p className={cn('mt-1 text-[14px] font-semibold leading-none text-foreground', valueClassName)}>{value}</p>
-      {meta ? <p className="mt-1 text-[10px] text-muted-foreground/80">{meta}</p> : null}
+    <div className={cn('rounded-md border border-border/50 bg-background/30 px-3 py-2', className)}>
+      <p className="text-[11px] text-muted-foreground/80">{label}</p>
+      <p className={cn('mt-1 text-base font-semibold leading-tight text-foreground', valueClassName)}>{value}</p>
+      {meta ? <p className="mt-1 text-xs text-muted-foreground/80">{meta}</p> : null}
     </div>
   )
 }
+
+interface ProjectInsetPanelProps {
+  children: ReactNode
+  className?: string
+}
+
+export function ProjectInsetPanel({ children, className }: ProjectInsetPanelProps) {
+  return <DashboardInsetPanel className={className}>{children}</DashboardInsetPanel>
+}
+
+interface ProjectStatusBadgeProps {
+  tone: 'neutral' | 'success' | 'warning' | 'error'
+  children: ReactNode
+  className?: string
+}
+
+export function ProjectStatusBadge({ tone, children, className }: ProjectStatusBadgeProps) {
+  return <DashboardStatusBadge tone={tone} className={className}>{children}</DashboardStatusBadge>
+}
+
+interface ProjectInlineAlertProps {
+  tone?: 'neutral' | 'success' | 'warning' | 'error'
+  title?: string
+  children: ReactNode
+  className?: string
+}
+
+export function ProjectInlineAlert({
+  tone = 'neutral',
+  title,
+  children,
+  className,
+}: ProjectInlineAlertProps) {
+  return (
+    <DashboardInlineCallout tone={tone} title={title} className={className}>
+      {children}
+    </DashboardInlineCallout>
+  )
+}
+
+export { DashboardMetadataItem as ProjectMetadataItem, DashboardMetadataRow as ProjectMetadataRow }

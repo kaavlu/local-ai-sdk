@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 import { DynoSdkError } from '../client.js';
 import { CachedProjectConfigProvider, DynoEmbeddingsRuntime } from '../embeddings-runtime.js';
@@ -546,6 +549,50 @@ test('createHttpTelemetrySink posts normalized telemetry payload', async () => {
   assert.equal(receivedBody?.['decision'], 'local');
   assert.equal(receivedBody?.['reasonCategory'], 'local_execution');
   assert.equal(receivedBody?.['durationMs'], 44);
+  assert.equal(receivedBody?.['endpoint'], '/sdk/embeddings');
+  assert.equal(receivedBody?.['status'], 'success');
+});
+
+test('createHttpTelemetrySink maps generation and batch telemetry payload fields', async () => {
+  const payloads: Record<string, unknown>[] = [];
+  const sink = createHttpTelemetrySink({
+    endpointUrl: 'http://control-plane.test/telemetry/events',
+    fetchImpl: (async (_input: string | URL | Request, init?: RequestInit) => {
+      payloads.push(JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>);
+      return new Response('{}', { status: 202 });
+    }) as typeof fetch,
+  });
+
+  await sink({
+    eventType: 'generate_text_execution',
+    projectId: 'proj-g',
+    useCase: 'text_generation',
+    decision: 'cloud',
+    reason: 'agent_unavailable',
+    reasonCategory: 'preflight',
+    durationMs: 55,
+    fallbackInvoked: true,
+  });
+  await sink({
+    eventType: 'embeddings_batch_execution',
+    projectId: 'proj-b',
+    useCase: 'embeddings',
+    decision: 'mixed',
+    reason: 'batch_partial_failure',
+    reasonCategory: 'fallback',
+    durationMs: 60,
+    fallbackInvoked: 'mixed',
+    itemCount: 3,
+    successCount: 2,
+    failureCount: 1,
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  assert.equal(payloads.length, 2);
+  assert.equal(payloads[0]?.['endpoint'], '/sdk/generate-text');
+  assert.equal(payloads[1]?.['endpoint'], '/sdk/embeddings');
+  assert.equal(payloads[1]?.['inputCount'], 3);
+  assert.equal(payloads[1]?.['itemCount'], 3);
 });
 
 test('createHttpTelemetrySink swallows transport failures', async () => {
@@ -611,6 +658,49 @@ test('cached provider with ttlMs=0 keeps no-cache semantics', async () => {
     () => provider.loadProjectConfig('project-test'),
     /cold-start resolver unavailable/,
   );
+});
+
+test('cached provider persists LKG to disk and reloads after process restart', async () => {
+  const cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dyno-config-cache-'));
+  let online = true;
+  let resolverCalls = 0;
+  try {
+    const networkProvider = {
+      loadProjectConfig: async () => {
+        resolverCalls += 1;
+        if (!online) {
+          throw new Error('resolver offline');
+        }
+        return createEmbeddingsConfig();
+      },
+    };
+
+    const firstProcess = new CachedProjectConfigProvider(networkProvider, {
+      ttlMs: 1,
+      allowStaleOnError: true,
+      maxStaleMs: 60_000,
+      persistence: 'disk',
+      diskPath: cacheDir,
+      cacheNamespace: 'http://resolver.test',
+    });
+    await firstProcess.loadProjectConfig('project-test');
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    online = false;
+    const secondProcess = new CachedProjectConfigProvider(networkProvider, {
+      ttlMs: 1,
+      allowStaleOnError: true,
+      maxStaleMs: 60_000,
+      persistence: 'disk',
+      diskPath: cacheDir,
+      cacheNamespace: 'http://resolver.test',
+    });
+    const fromDisk = await secondProcess.loadProjectConfig('project-test');
+    assert.equal(fromDisk.projectId, 'project-test');
+    assert.equal(resolverCalls, 2);
+  } finally {
+    fs.rmSync(cacheDir, { recursive: true, force: true });
+  }
 });
 
 test('embedTexts reports aggregate batch telemetry', async () => {
@@ -796,6 +886,94 @@ test('managed onboarding reuses stale cache when resolver refresh fails', async 
   const second = await runtime.embedText('second');
   assert.equal(second.decision, 'local');
   assert.deepEqual(second.embedding, [1, 1, 2]);
+});
+
+test('managed onboarding reuses disk LKG across runtime restart when resolver is down', async () => {
+  const cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dyno-managed-cache-'));
+  let failConfigRequest = false;
+  const resolver = createManagedResolverFetch();
+  const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input);
+    if (failConfigRequest && url.includes('/api/v1/sdk/config')) {
+      throw new Error('resolver unavailable after restart');
+    }
+    return resolver.fetchImpl(input, init);
+  }) as typeof fetch;
+  try {
+    const firstRuntime = new DynoEmbeddingsRuntime({
+      projectApiKey: 'dyno_pk_disk_warmup',
+      configResolverUrl: 'http://resolver.test',
+      resolverFetch: fetchImpl,
+      projectConfigCache: {
+        ttlMs: 1,
+        allowStaleOnError: true,
+        maxStaleMs: 60_000,
+        persistence: 'disk',
+        diskPath: cacheDir,
+      },
+      sdk: createSdkStub({
+        createJob: async () => ({ id: 'disk-warmup-job' }),
+        waitForJobCompletion: async () => ({ state: 'completed' }),
+        getJobResult: async () => ({ output: { embedding: [4, 2, 0] } }),
+      }) as never,
+      cloudFallback: async () => ({ embedding: [0, 0, 0] }),
+    });
+    await firstRuntime.embedText('warm');
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    failConfigRequest = true;
+    const secondRuntime = new DynoEmbeddingsRuntime({
+      projectApiKey: 'dyno_pk_disk_warmup',
+      configResolverUrl: 'http://resolver.test',
+      resolverFetch: fetchImpl,
+      projectConfigCache: {
+        ttlMs: 1,
+        allowStaleOnError: true,
+        maxStaleMs: 60_000,
+        persistence: 'disk',
+        diskPath: cacheDir,
+      },
+      sdk: createSdkStub({
+        createJob: async () => ({ id: 'disk-restart-job' }),
+        waitForJobCompletion: async () => ({ state: 'completed' }),
+        getJobResult: async () => ({ output: { embedding: [4, 2, 0] } }),
+      }) as never,
+      cloudFallback: async () => ({ embedding: [0, 0, 0] }),
+    });
+
+    const second = await secondRuntime.embedText('after-restart');
+    assert.equal(second.decision, 'local');
+    assert.deepEqual(second.embedding, [4, 2, 0]);
+  } finally {
+    fs.rmSync(cacheDir, { recursive: true, force: true });
+  }
+});
+
+test('managed onboarding fails cold start with disk mode when resolver is down and no cache exists', async () => {
+  const cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dyno-managed-cache-cold-'));
+  try {
+    const resolver = createManagedResolverFetch({
+      failConfigRequest: true,
+    });
+    const runtime = new DynoEmbeddingsRuntime({
+      projectApiKey: 'dyno_pk_disk_cold_start',
+      configResolverUrl: 'http://resolver.test',
+      resolverFetch: resolver.fetchImpl,
+      projectConfigCache: {
+        ttlMs: 30_000,
+        allowStaleOnError: true,
+        maxStaleMs: 60_000,
+        persistence: 'disk',
+        diskPath: cacheDir,
+      },
+      sdk: createSdkStub() as never,
+      cloudFallback: async () => ({ embedding: [1] }),
+    });
+
+    await assert.rejects(() => runtime.embedText('hello'), /resolver_unreachable/);
+  } finally {
+    fs.rmSync(cacheDir, { recursive: true, force: true });
+  }
 });
 
 test('managed onboarding in no-cache mode fails cold start when resolver is unreachable', async () => {
